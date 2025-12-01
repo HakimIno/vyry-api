@@ -17,7 +17,8 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Conversations::Avatar).text())
                     .col(ColumnDef::new(Conversations::CreatedAt).timestamp_with_time_zone().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(Conversations::CreatorId).uuid())
-                    .col(ColumnDef::new(Conversations::Metadata).json_binary().default("'{}'"))
+                    .col(ColumnDef::new(Conversations::Metadata).json_binary())
+                    .check(Expr::col(Conversations::ConvType).between(1, 2))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_conversations_creator_id")
@@ -25,16 +26,6 @@ impl MigrationTrait for Migration {
                             .to(Users::Table, Users::UserId)
                     )
                     .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_check_constraint(
-                TableCreateStatement::new()
-                    .table(Conversations::Table)
-                    .check(Expr::col(Conversations::ConvType).between(1, 2))
-                    .to_owned()
-                    .take()
             )
             .await
     }

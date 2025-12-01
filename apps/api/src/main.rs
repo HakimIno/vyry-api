@@ -9,6 +9,7 @@ mod websocket;
 
 use config::Config;
 use handlers::{auth, health};
+use middleware::auth::AuthMiddleware;
 use websocket::{connection::ConnectionManager, handler::websocket_handler};
 
 #[actix_web::main]
@@ -22,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::from_env()?;
+    let config_data = web::Data::new(config.clone());
     tracing::info!("Starting chat API server...");
 
     let db = infrastructure::database::init_database(&config.database_url).await?;
@@ -42,11 +44,14 @@ async fn main() -> anyhow::Result<()> {
         App::new()
             .wrap(cors)
             .wrap(Logger::default())
+            .wrap(AuthMiddleware)
             .app_data(web::Data::new(db.clone()))
+            .app_data(config_data.clone())
             .app_data(connection_manager.clone())
             .service(health::health_check)
             .service(auth::register)
             .service(auth::login)
+            .service(auth::get_me)
             .service(websocket_handler)
     })
     .bind(&server_addr)?

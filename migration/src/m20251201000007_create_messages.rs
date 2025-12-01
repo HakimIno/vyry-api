@@ -26,7 +26,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Messages::EditedAt).timestamp_with_time_zone())
                     .col(ColumnDef::new(Messages::DeletedAt).timestamp_with_time_zone())
                     .col(ColumnDef::new(Messages::ExpiresAt).timestamp_with_time_zone())
-                    .col(ColumnDef::new(Messages::Extra).json_binary().default("'{}'"))
+                    .col(ColumnDef::new(Messages::Extra).json_binary())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_messages_conv_id")

@@ -1,5 +1,5 @@
 use redis::aio::MultiplexedConnection;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 pub struct RedisClient {
     conn: MultiplexedConnection,

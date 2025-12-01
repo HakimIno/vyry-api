@@ -1,9 +1,23 @@
-use actix_web::{post, web, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder, HttpMessage};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use core::entities::{users, devices, one_time_prekeys};
 use core::signal::wrapper::create_signal_keys;
+use argon2::{Argon2, PasswordHasher};
+use argon2::password_hash::SaltString;
+use chrono::{Duration, Utc};
+use jsonwebtoken::{encode, EncodingKey, Header};
+use crate::config::Config;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    pub sub: String,
+    pub device_id: i64,
+    pub exp: i64,
+    pub iat: i64,
+    pub token_type: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -24,11 +38,12 @@ pub async fn register(
     db: web::Data<DatabaseConnection>,
     req: web::Json<RegisterRequest>,
 ) -> impl Responder {
-    let phone_hash = argon2::hash_encoded(
-        req.phone_number.as_bytes(),
-        b"somesalt",
-        &argon2::Config::default(),
-    ).unwrap_or_default();
+    let argon2 = Argon2::default();
+    let salt = SaltString::from_b64("c29tZXNhbHQAAAAAAAAAAAAA").unwrap(); // "somesalt" in base64
+    let phone_hash = argon2
+        .hash_password(req.phone_number.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .unwrap_or_default();
 
     let signal_keys = match create_signal_keys() {
         Ok(keys) => keys,
@@ -111,9 +126,16 @@ pub struct LoginResponse {
     pub user_id: Uuid,
 }
 
+#[derive(Debug, Serialize)]
+pub struct MeResponse {
+    pub user_id: Uuid,
+    pub device_id: i64,
+}
+
 #[post("/api/v1/auth/login")]
 pub async fn login(
     db: web::Data<DatabaseConnection>,
+    config: web::Data<Config>,
     req: web::Json<LoginRequest>,
 ) -> impl Responder {
     use sea_orm::ColumnTrait;
@@ -148,12 +170,72 @@ pub async fn login(
         })),
     };
 
-    let access_token = format!("access_token_{}", user.user_id);
-    let refresh_token = format!("refresh_token_{}", user.user_id);
+    let now = Utc::now();
+
+    let access_claims = Claims {
+        sub: user.user_id.to_string(),
+        device_id: device.device_id,
+        iat: now.timestamp(),
+        exp: (now + Duration::seconds(config.jwt_expiration)).timestamp(),
+        token_type: "access".to_string(),
+    };
+
+    let refresh_claims = Claims {
+        sub: user.user_id.to_string(),
+        device_id: device.device_id,
+        iat: now.timestamp(),
+        exp: (now + Duration::seconds(config.refresh_token_expiration)).timestamp(),
+        token_type: "refresh".to_string(),
+    };
+
+    let encoding_key = EncodingKey::from_secret(config.jwt_secret.as_bytes());
+
+    let access_token = match encode(&Header::default(), &access_claims, &encoding_key) {
+        Ok(t) => t,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to generate access token: {}", e)
+            }))
+        }
+    };
+
+    let refresh_token = match encode(&Header::default(), &refresh_claims, &encoding_key) {
+        Ok(t) => t,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to generate refresh token: {}", e)
+            }))
+        }
+    };
 
     HttpResponse::Ok().json(LoginResponse {
         access_token,
         refresh_token,
         user_id: user.user_id,
     })
+}
+
+#[get("/api/v1/auth/me")]
+pub async fn get_me(req: HttpRequest) -> impl Responder {
+    use crate::handlers::auth::Claims;
+
+    if let Some(claims) = req.extensions().get::<Claims>() {
+        let user_id = match Uuid::parse_str(&claims.sub) {
+            Ok(id) => id,
+            Err(_) => {
+                return HttpResponse::Unauthorized().json(serde_json::json!({
+                    "error": "Invalid user id in token"
+                }));
+            }
+        };
+
+        HttpResponse::Ok().json(MeResponse {
+            user_id,
+            device_id: claims.device_id,
+        })
+    } else {
+        HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Missing or invalid token"
+        }))
+    }
 }

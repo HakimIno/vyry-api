@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer};
+use ed25519_dalek::{SigningKey, Signature, Signer};
 use x25519_dalek::{PublicKey, StaticSecret};
 use rand::rngs::OsRng;
 
