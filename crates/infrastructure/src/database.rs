@@ -1,5 +1,5 @@
-pub use sea_orm::DatabaseConnection;
 pub use redis::aio::MultiplexedConnection;
+pub use sea_orm::DatabaseConnection;
 
 pub async fn init_database(database_url: &str) -> anyhow::Result<DatabaseConnection> {
     let db = sea_orm::Database::connect(database_url).await?;

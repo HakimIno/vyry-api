@@ -1,1 +1,3 @@
-// Application layer placeholder
+pub mod auth;
+pub mod chat;
+pub mod keys;

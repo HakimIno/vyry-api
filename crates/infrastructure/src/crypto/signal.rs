@@ -1,7 +1,7 @@
 use anyhow::Result;
-use ed25519_dalek::{SigningKey, Signature, Signer};
-use x25519_dalek::{PublicKey, StaticSecret};
+use ed25519_dalek::{Signature, Signer, SigningKey};
 use rand::rngs::OsRng;
+use x25519_dalek::{PublicKey, StaticSecret};
 
 #[derive(Clone)]
 pub struct IdentityKeyPair {
@@ -28,12 +28,12 @@ pub struct SignedPreKey {
 pub fn generate_identity_keypair() -> Result<(IdentityKeyPair, Vec<u8>)> {
     let signing_key = SigningKey::generate(&mut OsRng);
     let verifying_key = signing_key.verifying_key();
-    
+
     let key_pair = IdentityKeyPair {
         public_key: verifying_key.to_bytes().to_vec(),
         private_key: signing_key.to_bytes().to_vec(),
     };
-    
+
     Ok((key_pair, verifying_key.to_bytes().to_vec()))
 }
 
@@ -47,14 +47,14 @@ pub fn generate_signed_prekey(
 ) -> Result<SignedPreKey> {
     let secret = StaticSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
-    
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
-    
+
     let signing_key = SigningKey::from_bytes(&identity_key_pair.private_key.as_slice().try_into()?);
     let signature: Signature = signing_key.sign(public.as_bytes());
-    
+
     Ok(SignedPreKey {
         id: signed_prekey_id,
         public_key: public.to_bytes().to_vec(),
@@ -69,7 +69,7 @@ pub fn generate_prekeys(start_id: u32, count: u32) -> Result<Vec<PreKey>> {
     for i in 0..count {
         let secret = StaticSecret::random_from_rng(OsRng);
         let public = PublicKey::from(&secret);
-        
+
         prekeys.push(PreKey {
             id: start_id + i,
             public_key: public.to_bytes().to_vec(),

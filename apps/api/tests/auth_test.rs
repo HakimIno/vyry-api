@@ -1,9 +1,11 @@
 use actix_web::{test, web, App};
-use api::handlers::auth::{request_otp, verify_otp, RequestOtpRequest, VerifyOtpRequest, VerifyOtpResponse};
+use api::handlers::auth::{
+    request_otp, verify_otp, RequestOtpRequest, VerifyOtpRequest, VerifyOtpResponse,
+};
 use infrastructure::database;
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, DeleteResult};
-use uuid::Uuid;
 use redis::AsyncCommands;
+use sea_orm::{ColumnTrait, DeleteResult, EntityTrait, QueryFilter};
+use uuid::Uuid;
 
 // Import core crate entities
 // Note: Using explicit module path to avoid linter confusion with std::core
@@ -16,10 +18,16 @@ async fn test_otp_flow_and_signal_keys() {
     // 1. Setup Test Environment
     dotenvy::from_filename(".env").ok();
     let config = api::config::Config::from_env().expect("Failed to load config");
-    
-    let db = database::init_database(&config.database_url).await.expect("Failed to connect DB");
-    let redis_client = redis::Client::open(config.redis_url.clone()).expect("Failed to create Redis client");
-    let redis_conn = redis_client.get_multiplexed_tokio_connection().await.expect("Failed to connect Redis");
+
+    let db = database::init_database(&config.database_url)
+        .await
+        .expect("Failed to connect DB");
+    let redis_client =
+        redis::Client::open(config.redis_url.clone()).expect("Failed to create Redis client");
+    let redis_conn = redis_client
+        .get_multiplexed_tokio_connection()
+        .await
+        .expect("Failed to connect Redis");
 
     // Clean up previous test data
     let phone_number = "+66899999999";
@@ -36,8 +44,9 @@ async fn test_otp_flow_and_signal_keys() {
             .app_data(web::Data::new(redis_conn.clone()))
             .app_data(web::Data::new(config.clone()))
             .service(request_otp)
-            .service(verify_otp)
-    ).await;
+            .service(verify_otp),
+    )
+    .await;
 
     // 3. Test Request OTP
     let req = test::TestRequest::post()
@@ -46,13 +55,19 @@ async fn test_otp_flow_and_signal_keys() {
             phone_number: phone_number.to_string(),
         })
         .to_request();
-    
+
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
     // 4. Get OTP from Redis (Simulate user receiving SMS)
-    let mut conn = redis_client.get_multiplexed_async_connection().await.expect("Failed to get async conn");
-    let otp: String = conn.get(format!("otp:{}", phone_number)).await.expect("Failed to get OTP");
+    let mut conn = redis_client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("Failed to get async conn");
+    let otp: String = conn
+        .get(format!("otp:{}", phone_number))
+        .await
+        .expect("Failed to get OTP");
     assert_eq!(otp.len(), 6);
 
     // 5. Test Verify OTP
@@ -76,13 +91,21 @@ async fn test_otp_flow_and_signal_keys() {
     assert!(body.is_new_user);
 
     // 6. Verify Database State (Signal Keys)
-    
+
     // Check User
-    let user = users::Entity::find_by_id(body.user_id).one(&db).await.expect("DB Error").expect("User not found");
+    let user = users::Entity::find_by_id(body.user_id)
+        .one(&db)
+        .await
+        .expect("DB Error")
+        .expect("User not found");
     assert_eq!(user.phone_number, phone_number);
 
     // Check Device & Signal Keys
-    let device = devices::Entity::find_by_id(body.device_id).one(&db).await.expect("DB Error").expect("Device not found");
+    let device = devices::Entity::find_by_id(body.device_id)
+        .one(&db)
+        .await
+        .expect("DB Error")
+        .expect("Device not found");
     assert_eq!(device.user_id, user.user_id);
     assert!(!device.identity_key_public.is_empty());
     assert!(!device.signed_prekey_public.is_empty());
@@ -94,8 +117,12 @@ async fn test_otp_flow_and_signal_keys() {
         .all(&db)
         .await
         .expect("DB Error");
-    
-    assert_eq!(prekeys.len(), 100, "Should generate exactly 100 one-time prekeys");
-    
+
+    assert_eq!(
+        prekeys.len(),
+        100,
+        "Should generate exactly 100 one-time prekeys"
+    );
+
     println!("✅ Test Passed: OTP Flow + Signal Key Generation Complete!");
 }

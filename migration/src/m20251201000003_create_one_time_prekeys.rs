@@ -11,16 +11,32 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(OneTimePrekeys::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(OneTimePrekeys::DeviceId).big_integer().not_null())
-                    .col(ColumnDef::new(OneTimePrekeys::PrekeyId).integer().not_null())
-                    .col(ColumnDef::new(OneTimePrekeys::PublicKey).binary().not_null())
-                    .primary_key(Index::create().col(OneTimePrekeys::DeviceId).col(OneTimePrekeys::PrekeyId))
+                    .col(
+                        ColumnDef::new(OneTimePrekeys::DeviceId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(OneTimePrekeys::PrekeyId)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(OneTimePrekeys::PublicKey)
+                            .binary()
+                            .not_null(),
+                    )
+                    .primary_key(
+                        Index::create()
+                            .col(OneTimePrekeys::DeviceId)
+                            .col(OneTimePrekeys::PrekeyId),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_one_time_prekeys_device_id")
                             .from(OneTimePrekeys::Table, OneTimePrekeys::DeviceId)
                             .to(Devices::Table, Devices::DeviceId)
-                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
             )

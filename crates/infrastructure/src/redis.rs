@@ -10,7 +10,11 @@ impl RedisClient {
         Self { conn }
     }
 
-    pub async fn publish<T: Serialize>(&mut self, channel: &str, message: &T) -> anyhow::Result<()> {
+    pub async fn publish<T: Serialize>(
+        &mut self,
+        channel: &str,
+        message: &T,
+    ) -> anyhow::Result<()> {
         let payload = serde_json::to_string(message)?;
         redis::cmd("PUBLISH")
             .arg(channel)

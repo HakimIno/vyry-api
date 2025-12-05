@@ -1,3 +1,4 @@
+use actix_ws::Session;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -10,6 +11,7 @@ pub struct WsConnection {
     pub user_id: Uuid,
     pub device_id: i64,
     pub conn_id: ConnectionId,
+    pub session: Session,
 }
 
 pub struct ConnectionManager {
@@ -30,7 +32,7 @@ impl ConnectionManager {
         let user_id = conn.user_id;
 
         self.connections.write().await.insert(conn_id, conn);
-        
+
         self.user_connections
             .write()
             .await
@@ -47,13 +49,24 @@ impl ConnectionManager {
         }
     }
 
-    pub async fn get_user_connections(&self, user_id: &Uuid) -> Vec<ConnectionId> {
-        self.user_connections
-            .read()
-            .await
-            .get(user_id)
-            .cloned()
-            .unwrap_or_default()
+    #[allow(dead_code)]
+    pub async fn get_user_connections(&self, user_id: &Uuid) -> Vec<WsConnection> {
+        let user_conns = self.user_connections.read().await;
+        let all_conns = self.connections.read().await;
+        
+        if let Some(conn_ids) = user_conns.get(user_id) {
+            conn_ids.iter()
+                .filter_map(|id| all_conns.get(id).cloned())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn get_device_connection(&self, user_id: &Uuid, device_id: i64) -> Option<WsConnection> {
+        let connections = self.get_user_connections(user_id).await;
+        connections.into_iter().find(|c| c.device_id == device_id)
     }
 }
 

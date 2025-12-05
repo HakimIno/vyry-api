@@ -1,3 +1,3 @@
+pub mod crypto;
 pub mod database;
 pub mod redis;
-pub mod crypto;

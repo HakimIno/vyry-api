@@ -8,5 +8,10 @@ uuid.workspace = true
 chrono.workspace = true
 serde.workspace = true
 anyhow.workspace = true
+sea-orm.workspace = true
+redis.workspace = true
+jsonwebtoken.workspace = true
+rand.workspace = true
+infrastructure = { path = "../infrastructure" }
 core = { path = "../core" }
 domain = { path = "../domain" }

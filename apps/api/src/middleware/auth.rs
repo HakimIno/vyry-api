@@ -2,17 +2,16 @@ use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     error::ErrorUnauthorized,
     http::header,
-    web,
-    Error, HttpMessage,
+    web, Error, HttpMessage,
 };
 use futures::future::LocalBoxFuture;
 use std::future::{ready, Ready};
 use std::task::{Context, Poll};
 
-use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
 use crate::config::Config;
-use crate::handlers::auth::Claims;
+use application::auth::dtos::Claims;
 
 pub struct AuthMiddleware;
 
@@ -62,8 +61,7 @@ where
                     .or_else(|| auth_str.strip_prefix("bearer "))
                 {
                     if let Some(config) = req.app_data::<web::Data<Config>>() {
-                        let decoding_key =
-                            DecodingKey::from_secret(config.jwt_secret.as_bytes());
+                        let decoding_key = DecodingKey::from_secret(config.jwt_secret.as_bytes());
                         let mut validation = Validation::new(Algorithm::HS256);
                         validation.validate_exp = true;
 

@@ -11,24 +11,36 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(MessageDeliveries::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(MessageDeliveries::MessageId).big_integer().not_null())
-                    .col(ColumnDef::new(MessageDeliveries::DeviceId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(MessageDeliveries::MessageId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(MessageDeliveries::DeviceId)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(MessageDeliveries::DeliveredAt).timestamp_with_time_zone())
                     .col(ColumnDef::new(MessageDeliveries::ReadAt).timestamp_with_time_zone())
-                    .primary_key(Index::create().col(MessageDeliveries::MessageId).col(MessageDeliveries::DeviceId))
+                    .primary_key(
+                        Index::create()
+                            .col(MessageDeliveries::MessageId)
+                            .col(MessageDeliveries::DeviceId),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_message_deliveries_message_id")
                             .from(MessageDeliveries::Table, MessageDeliveries::MessageId)
                             .to(Messages::Table, Messages::MessageId)
-                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_message_deliveries_device_id")
                             .from(MessageDeliveries::Table, MessageDeliveries::DeviceId)
                             .to(Devices::Table, Devices::DeviceId)
-                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
             )

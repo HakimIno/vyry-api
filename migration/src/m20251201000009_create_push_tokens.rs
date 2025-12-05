@@ -12,22 +12,38 @@ impl MigrationTrait for Migration {
                     .table(PushTokens::Table)
                     .if_not_exists()
                     .col(ColumnDef::new(PushTokens::UserId).uuid().not_null())
-                    .col(ColumnDef::new(PushTokens::DeviceId).big_integer().not_null())
-                    .col(ColumnDef::new(PushTokens::Platform).small_integer().not_null())
+                    .col(
+                        ColumnDef::new(PushTokens::DeviceId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(PushTokens::Platform)
+                            .small_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(PushTokens::Token).text().not_null())
-                    .col(ColumnDef::new(PushTokens::UpdatedAt).timestamp_with_time_zone().default(Expr::current_timestamp()))
-                    .primary_key(Index::create().col(PushTokens::UserId).col(PushTokens::DeviceId))
+                    .col(
+                        ColumnDef::new(PushTokens::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .primary_key(
+                        Index::create()
+                            .col(PushTokens::UserId)
+                            .col(PushTokens::DeviceId),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_push_tokens_user_id")
                             .from(PushTokens::Table, PushTokens::UserId)
-                            .to(Users::Table, Users::UserId)
+                            .to(Users::Table, Users::UserId),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_push_tokens_device_id")
                             .from(PushTokens::Table, PushTokens::DeviceId)
-                            .to(Devices::Table, Devices::DeviceId)
+                            .to(Devices::Table, Devices::DeviceId),
                     )
                     .to_owned(),
             )

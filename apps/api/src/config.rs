@@ -12,7 +12,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         dotenvy::dotenv().ok();
-        
+
         Ok(Self {
             database_url: std::env::var("DATABASE_URL")?,
             redis_url: std::env::var("REDIS_URL")?,

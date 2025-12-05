@@ -10,6 +10,7 @@ pub struct Model {
     pub device_id: i64,
     pub delivered_at: Option<DateTimeWithTimeZone>,
     pub read_at: Option<DateTimeWithTimeZone>,
+    pub content: Option<Vec<u8>>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

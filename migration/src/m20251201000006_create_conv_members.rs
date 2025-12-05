@@ -14,22 +14,30 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(ConvMembers::ConvId).uuid().not_null())
                     .col(ColumnDef::new(ConvMembers::UserId).uuid().not_null())
                     .col(ColumnDef::new(ConvMembers::Role).small_integer().default(0))
-                    .col(ColumnDef::new(ConvMembers::JoinedAt).timestamp_with_time_zone().default(Expr::current_timestamp()))
+                    .col(
+                        ColumnDef::new(ConvMembers::JoinedAt)
+                            .timestamp_with_time_zone()
+                            .default(Expr::current_timestamp()),
+                    )
                     .col(ColumnDef::new(ConvMembers::LeftAt).timestamp_with_time_zone())
-                    .primary_key(Index::create().col(ConvMembers::ConvId).col(ConvMembers::UserId))
+                    .primary_key(
+                        Index::create()
+                            .col(ConvMembers::ConvId)
+                            .col(ConvMembers::UserId),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_conv_members_conv_id")
                             .from(ConvMembers::Table, ConvMembers::ConvId)
                             .to(Conversations::Table, Conversations::ConvId)
-                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_conv_members_user_id")
                             .from(ConvMembers::Table, ConvMembers::UserId)
                             .to(Users::Table, Users::UserId)
-                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
             )

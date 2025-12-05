@@ -11,6 +11,8 @@ mod m20251201000007_create_messages;
 mod m20251201000008_create_message_deliveries;
 mod m20251201000009_create_push_tokens;
 mod m20251202000010_create_otp_verifications;
+mod m20251205_alter_message_deliveries;
+mod m20251205_add_client_message_id_to_messages;
 
 pub struct Migrator;
 
@@ -29,6 +31,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20251201000008_create_message_deliveries::Migration),
             Box::new(m20251201000009_create_push_tokens::Migration),
             Box::new(m20251202000010_create_otp_verifications::Migration),
+            Box::new(m20251205_alter_message_deliveries::Migration),
+            Box::new(m20251205_add_client_message_id_to_messages::Migration),
         ]
     }
 }

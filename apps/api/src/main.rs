@@ -1,5 +1,5 @@
-use actix_web::{middleware::Logger, web, App, HttpServer};
 use actix_cors::Cors;
+use actix_web::{middleware::Logger, web, App, HttpServer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub mod config;
@@ -8,7 +8,7 @@ mod middleware;
 mod websocket;
 
 use config::Config;
-use handlers::{auth, health};
+use handlers::{auth, health, keys};
 use middleware::auth::AuthMiddleware;
 use websocket::{connection::ConnectionManager, handler::websocket_handler};
 
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
 
     let db = infrastructure::database::init_database(&config.database_url).await?;
     let redis_conn = infrastructure::database::init_redis(&config.redis_url).await?;
-    
+
     let connection_manager = web::Data::new(ConnectionManager::new());
 
     let server_addr = format!("{}:{}", config.server_host, config.server_port);
@@ -52,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
             .service(health::health_check)
             .service(auth::request_otp)
             .service(auth::verify_otp)
+            .service(keys::get_prekey_bundle)
             .service(websocket_handler)
     })
     .bind(&server_addr)?

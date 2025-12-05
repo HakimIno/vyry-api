@@ -7,6 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub message_id: i64,
     pub conv_id: Uuid,
+    pub client_message_id: Option<Uuid>,
     pub sender_user_id: Uuid,
     pub sender_device_id: i64,
     pub message_type: i16,

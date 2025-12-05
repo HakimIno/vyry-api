@@ -11,11 +11,25 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Conversations::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(Conversations::ConvId).uuid().not_null().primary_key().extra("DEFAULT gen_random_uuid()"))
-                    .col(ColumnDef::new(Conversations::ConvType).small_integer().not_null())
+                    .col(
+                        ColumnDef::new(Conversations::ConvId)
+                            .uuid()
+                            .not_null()
+                            .primary_key()
+                            .extra("DEFAULT gen_random_uuid()"),
+                    )
+                    .col(
+                        ColumnDef::new(Conversations::ConvType)
+                            .small_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(Conversations::Name).text())
                     .col(ColumnDef::new(Conversations::Avatar).text())
-                    .col(ColumnDef::new(Conversations::CreatedAt).timestamp_with_time_zone().default(Expr::current_timestamp()))
+                    .col(
+                        ColumnDef::new(Conversations::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .default(Expr::current_timestamp()),
+                    )
                     .col(ColumnDef::new(Conversations::CreatorId).uuid())
                     .col(ColumnDef::new(Conversations::Metadata).json_binary())
                     .check(Expr::col(Conversations::ConvType).between(1, 2))
@@ -23,7 +37,7 @@ impl MigrationTrait for Migration {
                         ForeignKey::create()
                             .name("fk_conversations_creator_id")
                             .from(Conversations::Table, Conversations::CreatorId)
-                            .to(Users::Table, Users::UserId)
+                            .to(Users::Table, Users::UserId),
                     )
                     .to_owned(),
             )
