@@ -25,6 +25,24 @@ pub enum WsMessage {
     SyncResponse {
         messages: Vec<SyncMessageDto>,
     },
+    /// WebRTC Signaling: SDP Offer
+    SdpOffer {
+        recipient_id: Uuid,
+        recipient_device_id: i64,
+        sdp: String,
+    },
+    /// WebRTC Signaling: SDP Answer
+    SdpAnswer {
+        recipient_id: Uuid,
+        recipient_device_id: i64,
+        sdp: String,
+    },
+    /// WebRTC Signaling: ICE Candidate
+    IceCandidate {
+        recipient_id: Uuid,
+        recipient_device_id: i64,
+        candidate: String,
+    },
     /// Error message from server
     Error {
         code: String,

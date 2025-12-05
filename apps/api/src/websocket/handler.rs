@@ -121,6 +121,45 @@ pub async fn websocket_handler(
                                         }
                                     }
                                 }
+                                super::messages::WsMessage::SdpOffer { recipient_id, recipient_device_id, sdp } => {
+                                    tracing::info!("Routing SdpOffer to User {} Device {}", recipient_id, recipient_device_id);
+                                    if let Some(mut target_conn) = manager.get_device_connection(&recipient_id, recipient_device_id).await {
+                                        let outbound = super::messages::WsMessage::SdpOffer {
+                                            recipient_id: user_id, // From sender
+                                            recipient_device_id: device_id,
+                                            sdp,
+                                        };
+                                        if let Ok(json) = serde_json::to_string(&outbound) {
+                                            let _ = target_conn.session.text(json).await;
+                                        }
+                                    }
+                                }
+                                super::messages::WsMessage::SdpAnswer { recipient_id, recipient_device_id, sdp } => {
+                                    tracing::info!("Routing SdpAnswer to User {} Device {}", recipient_id, recipient_device_id);
+                                    if let Some(mut target_conn) = manager.get_device_connection(&recipient_id, recipient_device_id).await {
+                                        let outbound = super::messages::WsMessage::SdpAnswer {
+                                            recipient_id: user_id,
+                                            recipient_device_id: device_id,
+                                            sdp,
+                                        };
+                                        if let Ok(json) = serde_json::to_string(&outbound) {
+                                            let _ = target_conn.session.text(json).await;
+                                        }
+                                    }
+                                }
+                                super::messages::WsMessage::IceCandidate { recipient_id, recipient_device_id, candidate } => {
+                                    tracing::info!("Routing IceCandidate to User {} Device {}", recipient_id, recipient_device_id);
+                                    if let Some(mut target_conn) = manager.get_device_connection(&recipient_id, recipient_device_id).await {
+                                        let outbound = super::messages::WsMessage::IceCandidate {
+                                            recipient_id: user_id,
+                                            recipient_device_id: device_id,
+                                            candidate,
+                                        };
+                                        if let Ok(json) = serde_json::to_string(&outbound) {
+                                            let _ = target_conn.session.text(json).await;
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }
