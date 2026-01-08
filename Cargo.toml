@@ -9,6 +9,7 @@ members = [
     "migration", "crates/p2p",
 ]
 resolver = "2"
+default-run = "api"
 
 [workspace.package]
 version = "0.1.0"
@@ -38,3 +39,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 argon2 = "0.5"
 jsonwebtoken = "9.3"
+
+[profile.dev]
+incremental = true
+split-debuginfo = "unpacked"  # macOS/Linux: separate debug info
+
+[profile.release]
+strip = true  # remove debug symbols
+lto = true    # smaller/faster binaries

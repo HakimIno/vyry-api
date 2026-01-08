@@ -14,9 +14,10 @@ use rand::Rng;
 use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    TransactionTrait,
 };
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 // ============ Config ============
@@ -117,10 +118,13 @@ impl VerifyOtpUseCase {
             }
             None => {
                 // Create new user
+                // Hash phone number for privacy-preserving lookups
+                let phone_hash = Sha256::digest(req.phone_number.as_bytes()).to_vec();
+                
                 let new_user = users::ActiveModel {
                     user_id: Set(Uuid::new_v4()),
                     phone_number: Set(req.phone_number.clone()),
-                    phone_number_hash: Set(Vec::new()), // Placeholder
+                    phone_number_hash: Set(phone_hash),
                     username: Set(None),
                     display_name: Set(None),
                     bio: Set(None),
@@ -149,6 +153,25 @@ impl VerifyOtpUseCase {
         let registration_id = generate_registration_id();
         let signed_prekey = generate_signed_prekey(&identity_key_pair, 1)?;
         let one_time_prekeys_list = generate_prekeys(1, 100)?;
+
+        // Check if device_uuid already exists (could be from previous failed registration)
+        // If it exists, delete the old device and its prekeys to allow re-registration
+        if let Some(existing_device) = devices::Entity::find()
+            .filter(devices::Column::DeviceUuid.eq(req.device_uuid))
+            .one(&txn)
+            .await?
+        {
+            // Delete one-time prekeys first (due to foreign key constraint)
+            one_time_prekeys::Entity::delete_many()
+                .filter(one_time_prekeys::Column::DeviceId.eq(existing_device.device_id))
+                .exec(&txn)
+                .await?;
+            
+            // Delete the old device
+            devices::Entity::delete_by_id(existing_device.device_id)
+                .exec(&txn)
+                .await?;
+        }
 
         // Create Device (Primary for OTP login)
         let device = devices::ActiveModel {
