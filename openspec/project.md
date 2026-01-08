@@ -1,7 +1,7 @@
 # Project Context
 
 ## Purpose
-Chat-RS is a production-ready chat system implementing Signal + Line messaging functionality. It provides end-to-end encrypted messaging with multi-device support, built entirely in Rust following 2025 standards. The system includes user authentication, real-time messaging, and comprehensive security features.
+Vyry-API is a production-ready chat system implementing Signal + Line messaging functionality. It provides end-to-end encrypted messaging with multi-device support, built entirely in Rust following 2025 standards. The system includes user authentication, real-time messaging, and comprehensive security features.
 
 ## Tech Stack
 - **Rust 2021** - Systems programming language with memory safety

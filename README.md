@@ -1,4 +1,4 @@
-# Chat-RS - Production Signal+Line Chat System
+# Vyry-API - Production Signal+Line Chat System
 
 โปรเจกต์แชทแบบ Signal + Line เต็มระบบ สร้างด้วย Rust 2025 standard
 
@@ -16,7 +16,7 @@
 ## โครงสร้างโปรเจกต์
 
 ```
-chat-rs/
+vyry-api/
 ├── Cargo.toml                  # Workspace root
 ├── apps/api/                   # Main API service
 ├── crates/
@@ -167,14 +167,14 @@ let keys = create_signal_keys()?;
 
 - System: PostgreSQL
 - Server: postgres
-- Username: chatuser
-- Password: chatpass
-- Database: chatdb
+- Username: vyryuser
+- Password: vyrypass
+- Database: vyrydb
 
 ### Redis CLI
 
 ```bash
-docker exec -it chat-redis redis-cli
+docker exec -it vyry-redis redis-cli
 ```
 
 ## Production Deployment
@@ -190,4 +190,4 @@ docker exec -it chat-redis redis-cli
 ## License
 
 MIT
-# chat-rs
+# vyry-api

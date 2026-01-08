@@ -1,24 +1,24 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: chat-postgres
+    container_name: vyry-postgres
     environment:
-      POSTGRES_USER: chatuser
-      POSTGRES_PASSWORD: chatpass
-      POSTGRES_DB: chatdb
+      POSTGRES_USER: vyryuser
+      POSTGRES_PASSWORD: vyrypass
+      POSTGRES_DB: vyrydb
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chatuser -d chatdb"]
+      test: ["CMD-SHELL", "pg_isready -U vyryuser -d vyrydb"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: chat-redis
+    container_name: vyry-redis
     ports:
       - "6379:6379"
     volumes:
@@ -31,7 +31,7 @@ services:
 
   adminer:
     image: adminer:latest
-    container_name: chat-adminer
+    container_name: vyry-adminer
     ports:
       - "8080:8080"
     environment:

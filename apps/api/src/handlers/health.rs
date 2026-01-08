@@ -5,7 +5,7 @@ use serde_json::json;
 pub async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(json!({
         "status": "ok",
-        "service": "chat-api",
+        "service": "vyry-api",
         "version": "1.0.0"
     }))
 }

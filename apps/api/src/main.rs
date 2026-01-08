@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let config_data = web::Data::new(config.clone());
-    tracing::info!("Starting chat API server...");
+    tracing::info!("Starting vyry API server...");
 
     let db = infrastructure::database::init_database(&config.database_url).await?;
     let redis_conn = infrastructure::database::init_redis(&config.redis_url).await?;
