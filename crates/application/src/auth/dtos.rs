@@ -52,6 +52,10 @@ pub struct VerifyOtpResponse {
 pub struct SetupProfileRequest {
     pub display_name: String,
     #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
     pub profile_picture_url: Option<String>,
 }
 
@@ -59,7 +63,21 @@ pub struct SetupProfileRequest {
 pub struct SetupProfileResponse {
     pub user_id: Uuid,
     pub display_name: String,
+    pub username: Option<String>,
+    pub bio: Option<String>,
     pub profile_picture_url: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetProfileResponse {
+    pub user_id: Uuid,
+    pub phone_number: String, // Masked phone number
+    pub display_name: Option<String>,
+    pub username: Option<String>,
+    pub bio: Option<String>,
+    pub profile_picture_url: Option<String>,
+    pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 

@@ -14,3 +14,6 @@ serde_json.workspace = true
 ed25519-dalek.workspace = true
 x25519-dalek.workspace = true
 rand.workspace = true
+uuid.workspace = true
+async-trait = "0.1"
+core = { path = "../core" }

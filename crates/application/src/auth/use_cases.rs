@@ -285,12 +285,84 @@ impl SetupProfileUseCase {
         req: SetupProfileRequest,
     ) -> Result<SetupProfileResponse> {
         // Validate display name
-        if req.display_name.trim().is_empty() {
+        let display_name = req.display_name.trim();
+        if display_name.is_empty() {
             return Err(anyhow!("Display name cannot be empty"));
         }
 
-        if req.display_name.len() > 100 {
+        if display_name.len() < 2 {
+            return Err(anyhow!("Display name must be at least 2 characters"));
+        }
+
+        if display_name.len() > 100 {
             return Err(anyhow!("Display name too long (max 100 characters)"));
+        }
+
+        // Validate username if provided
+        if let Some(ref username) = req.username {
+            let username = username.trim();
+            if !username.is_empty() {
+                // Username validation: alphanumeric, underscore, hyphen, 3-30 chars
+                if username.len() < 3 {
+                    return Err(anyhow!("Username must be at least 3 characters"));
+                }
+
+                if username.len() > 30 {
+                    return Err(anyhow!("Username too long (max 30 characters)"));
+                }
+
+                if !username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                    return Err(anyhow!("Username can only contain letters, numbers, underscores, and hyphens"));
+                }
+
+                // Check if username is already taken
+                let existing_user = users::Entity::find()
+                    .filter(users::Column::Username.eq(username))
+                    .filter(users::Column::UserId.ne(user_id))
+                    .one(db)
+                    .await?;
+
+                if existing_user.is_some() {
+                    return Err(anyhow!("Username is already taken"));
+                }
+            }
+        }
+
+        // Validate bio if provided
+        if let Some(ref bio) = req.bio {
+            let bio = bio.trim();
+            if !bio.is_empty() && bio.len() > 500 {
+                return Err(anyhow!("Bio too long (max 500 characters)"));
+            }
+        }
+
+        // Validate profile picture URL if provided
+        if let Some(ref url) = req.profile_picture_url {
+            let url = url.trim();
+            if !url.is_empty() {
+                // Basic URL validation
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(anyhow!("Profile picture URL must be a valid HTTP/HTTPS URL"));
+                }
+
+                if url.len() > 2048 {
+                    return Err(anyhow!("Profile picture URL too long (max 2048 characters)"));
+                }
+
+                // Additional URL format validation - check for valid URL structure
+                if url.len() < 10 || !url.contains("://") {
+                    return Err(anyhow!("Invalid profile picture URL format"));
+                }
+
+                // Check for valid domain structure (at least one dot after protocol)
+                if let Some(domain_part) = url.split("://").nth(1) {
+                    if domain_part.is_empty() || !domain_part.contains('.') {
+                        return Err(anyhow!("Invalid profile picture URL format"));
+                    }
+                } else {
+                    return Err(anyhow!("Invalid profile picture URL format"));
+                }
+            }
         }
 
         // Find and update user
@@ -301,8 +373,29 @@ impl SetupProfileUseCase {
 
         let now = Utc::now();
         let mut active_user: users::ActiveModel = user.into();
-        active_user.display_name = Set(Some(req.display_name.clone()));
-        active_user.profile_picture = Set(req.profile_picture_url.clone());
+        active_user.display_name = Set(Some(display_name.to_string()));
+        
+        // Update username (set to None if empty string or not provided)
+        if let Some(ref username) = req.username {
+            let username = username.trim();
+            active_user.username = Set(if username.is_empty() { None } else { Some(username.to_string()) });
+        }
+        // If username not provided in request, keep existing value (for profile updates)
+
+        // Update bio (set to None if empty string or not provided)
+        if let Some(ref bio) = req.bio {
+            let bio = bio.trim();
+            active_user.bio = Set(if bio.is_empty() { None } else { Some(bio.to_string()) });
+        }
+        // If bio not provided in request, keep existing value (for profile updates)
+
+        // Update profile picture (set to None if empty string or not provided)
+        if let Some(ref url) = req.profile_picture_url {
+            let url = url.trim();
+            active_user.profile_picture = Set(if url.is_empty() { None } else { Some(url.to_string()) });
+        }
+        // If profile picture not provided in request, keep existing value (for profile updates)
+
         active_user.updated_at = Set(now.into());
 
         let updated_user = active_user.update(db).await?;
@@ -310,8 +403,42 @@ impl SetupProfileUseCase {
         Ok(SetupProfileResponse {
             user_id: updated_user.user_id,
             display_name: updated_user.display_name.unwrap_or_default(),
+            username: updated_user.username,
+            bio: updated_user.bio,
             profile_picture_url: updated_user.profile_picture,
             updated_at: now,
+        })
+    }
+}
+
+// ============ Get Profile Use Case ============
+
+pub struct GetProfileUseCase;
+
+impl GetProfileUseCase {
+    pub async fn execute(db: &DatabaseConnection, user_id: Uuid) -> Result<GetProfileResponse> {
+        let user = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow!("User not found"))?;
+
+        // Mask phone number (show only last 4 digits)
+        let phone = &user.phone_number;
+        let masked_phone = if phone.len() > 4 {
+            format!("****{}", &phone[phone.len() - 4..])
+        } else {
+            "****".to_string()
+        };
+
+        Ok(GetProfileResponse {
+            user_id: user.user_id,
+            phone_number: masked_phone,
+            display_name: user.display_name,
+            username: user.username,
+            bio: user.bio,
+            profile_picture_url: user.profile_picture,
+            created_at: user.created_at.into(),
+            updated_at: user.updated_at.into(),
         })
     }
 }

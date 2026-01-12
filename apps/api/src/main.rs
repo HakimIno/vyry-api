@@ -6,7 +6,7 @@ pub mod config;
 pub mod handlers;
 mod middleware;
 mod websocket;
-
+ 
 use config::Config;
 use handlers::{auth, health, keys};
 use middleware::auth::AuthMiddleware;
@@ -26,8 +26,15 @@ async fn main() -> anyhow::Result<()> {
     let config_data = web::Data::new(config.clone());
     tracing::info!("Starting vyry API server...");
 
-    let db = infrastructure::database::init_database(&config.database_url).await?;
-    let redis_conn = infrastructure::database::init_redis(&config.redis_url).await?;
+    // Initialize database connections
+    let db_connections = infrastructure::database::DatabaseConnections::new(
+        &config.postgres_url,
+        &config.redis_url,
+    ).await?;
+    
+    // For backward compatibility, expose individual connections
+    let db = db_connections.postgres.clone();
+    let redis_conn = db_connections.redis.clone();
 
     let connection_manager = web::Data::new(ConnectionManager::new());
 
@@ -55,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
             .service(auth::request_otp)
             .service(auth::verify_otp)
             // Auth - Profile & PIN
+            .service(auth::get_profile)
             .service(auth::setup_profile)
             .service(auth::setup_pin)
             .service(auth::verify_pin)

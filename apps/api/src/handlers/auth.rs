@@ -93,6 +93,32 @@ pub async fn verify_otp(
 
 // ============ Profile Endpoints ============
 
+#[get("/api/v1/auth/profile")]
+pub async fn get_profile(
+    http_req: HttpRequest,
+    db: web::Data<DatabaseConnection>,
+) -> impl Responder {
+    let (user_id, _) = match extract_auth_claims(&http_req) {
+        Some(claims) => claims,
+        None => {
+            return HttpResponse::Unauthorized().json(AuthErrorResponse {
+                error: "Unauthorized".to_string(),
+                error_code: "UNAUTHORIZED".to_string(),
+                retry_after_seconds: None,
+            })
+        }
+    };
+
+    match GetProfileUseCase::execute(db.get_ref(), user_id).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => HttpResponse::InternalServerError().json(AuthErrorResponse {
+            error: e.to_string(),
+            error_code: "INTERNAL_ERROR".to_string(),
+            retry_after_seconds: None,
+        }),
+    }
+}
+
 #[post("/api/v1/auth/setup-profile")]
 pub async fn setup_profile(
     http_req: HttpRequest,
