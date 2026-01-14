@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::handlers::error_handler::app_error_to_response;
 use actix_web::{delete, get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use application::auth::{
     dtos::*,
@@ -6,6 +7,7 @@ use application::auth::{
 };
 use redis::aio::MultiplexedConnection;
 use sea_orm::DatabaseConnection;
+use tracing::{error, info};
 use uuid::Uuid;
 
 /// Extract user_id and device_id from JWT claims in request extensions
@@ -21,7 +23,7 @@ fn extract_auth_claims(req: &HttpRequest) -> Option<(Uuid, i64)> {
 
 // ============ OTP Endpoints ============
 
-#[post("/api/v1/auth/request-otp")]
+#[post("/request-otp")]
 pub async fn request_otp(
     redis_conn: web::Data<MultiplexedConnection>,
     req: web::Json<RequestOtpRequest>,
@@ -30,32 +32,20 @@ pub async fn request_otp(
 
     match RequestOtpUseCase::execute(&mut conn, req.into_inner()).await {
         Ok(otp) => {
-            tracing::info!("OTP generated for testing: {}", otp);
+            info!("OTP generated for testing: {}", otp);
             HttpResponse::Ok().json(RequestOtpResponse {
                 message: "OTP sent successfully".to_string(),
                 expires_in_seconds: 180,
             })
         }
         Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("Too many") {
-                HttpResponse::TooManyRequests().json(AuthErrorResponse {
-                    error: error_msg,
-                    error_code: "RATE_LIMITED".to_string(),
-                    retry_after_seconds: Some(600),
-                })
-            } else {
-                HttpResponse::InternalServerError().json(AuthErrorResponse {
-                    error: error_msg,
-                    error_code: "INTERNAL_ERROR".to_string(),
-                    retry_after_seconds: None,
-                })
-            }
+            error!("Request OTP error: {}", e);
+            app_error_to_response(e)
         }
     }
 }
 
-#[post("/api/v1/auth/verify-otp")]
+#[post("/verify-otp")]
 pub async fn verify_otp(
     db: web::Data<DatabaseConnection>,
     redis_conn: web::Data<MultiplexedConnection>,
@@ -71,29 +61,20 @@ pub async fn verify_otp(
     };
 
     match VerifyOtpUseCase::execute(db.get_ref(), &mut conn, &auth_config, req.into_inner()).await {
-        Ok(response) => HttpResponse::Ok().json(response),
+        Ok(response) => {
+            info!("OTP verified successfully for user: {}", response.user_id);
+            HttpResponse::Ok().json(response)
+        }
         Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("Invalid or expired OTP") {
-                HttpResponse::BadRequest().json(AuthErrorResponse {
-                    error: error_msg,
-                    error_code: "INVALID_OTP".to_string(),
-                    retry_after_seconds: None,
-                })
-            } else {
-                HttpResponse::InternalServerError().json(AuthErrorResponse {
-                    error: error_msg,
-                    error_code: "INTERNAL_ERROR".to_string(),
-                    retry_after_seconds: None,
-                })
-            }
+            error!("Verify OTP error: {}", e);
+            app_error_to_response(e)
         }
     }
 }
 
 // ============ Profile Endpoints ============
 
-#[get("/api/v1/auth/profile")]
+#[get("/profile")]
 pub async fn get_profile(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,
@@ -119,7 +100,7 @@ pub async fn get_profile(
     }
 }
 
-#[post("/api/v1/auth/setup-profile")]
+#[post("/setup-profile")]
 pub async fn setup_profile(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,
@@ -148,7 +129,7 @@ pub async fn setup_profile(
 
 // ============ PIN Endpoints ============
 
-#[post("/api/v1/auth/setup-pin")]
+#[post("/setup-pin")]
 pub async fn setup_pin(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,
@@ -175,7 +156,7 @@ pub async fn setup_pin(
     }
 }
 
-#[post("/api/v1/auth/verify-pin")]
+#[post("/verify-pin")]
 pub async fn verify_pin(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,
@@ -207,7 +188,7 @@ pub async fn verify_pin(
 
 // ============ Token Refresh ============
 
-#[post("/api/v1/auth/refresh-token")]
+#[post("/refresh-token")]
 pub async fn refresh_token(
     db: web::Data<DatabaseConnection>,
     config: web::Data<Config>,
@@ -242,7 +223,7 @@ pub async fn refresh_token(
 
 // ============ Device Linking Endpoints ============
 
-#[post("/api/v1/devices/link/create")]
+#[post("/link/create")]
 pub async fn create_linking_session(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,
@@ -268,7 +249,7 @@ pub async fn create_linking_session(
     }
 }
 
-#[post("/api/v1/devices/link/complete")]
+#[post("/link/complete")]
 pub async fn complete_linking(
     db: web::Data<DatabaseConnection>,
     req: web::Json<CompleteLinkingRequest>,
@@ -283,7 +264,7 @@ pub async fn complete_linking(
     }
 }
 
-#[post("/api/v1/devices/link/approve")]
+#[post("/link/approve")]
 pub async fn approve_linking(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,
@@ -312,7 +293,7 @@ pub async fn approve_linking(
 
 // ============ Device Management Endpoints ============
 
-#[get("/api/v1/devices")]
+#[get("")]
 pub async fn list_devices(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,
@@ -338,7 +319,7 @@ pub async fn list_devices(
     }
 }
 
-#[delete("/api/v1/devices/{device_id}")]
+#[delete("/{device_id}")]
 pub async fn unlink_device(
     http_req: HttpRequest,
     db: web::Data<DatabaseConnection>,

@@ -15,6 +15,7 @@ pub struct Model {
     pub display_name: Option<String>,
     pub bio: Option<String>,
     pub profile_picture: Option<String>,
+    pub background_image: Option<String>,
     pub last_seen_at: Option<DateTimeWithTimeZone>,
     pub is_online: bool,
     pub is_deleted: bool,

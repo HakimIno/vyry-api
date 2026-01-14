@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use validator::Validate;
 
 // ============ JWT Claims ============
 
@@ -15,8 +16,9 @@ pub struct Claims {
 
 // ============ OTP ============
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct RequestOtpRequest {
+    #[validate(custom(function = "crate::auth::validate_phone_number"))]
     pub phone_number: String,
 }
 
@@ -26,12 +28,16 @@ pub struct RequestOtpResponse {
     pub expires_in_seconds: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct VerifyOtpRequest {
+    #[validate(custom(function = "crate::auth::validate_phone_number"))]
     pub phone_number: String,
+    #[validate(length(min = 6, max = 6, message = "OTP must be exactly 6 digits"))]
     pub otp: String,
     pub device_uuid: Uuid,
+    #[validate(length(max = 100, message = "Device name must be at most 100 characters"))]
     pub device_name: Option<String>,
+    #[validate(range(min = 1, max = 4, message = "Platform must be between 1-4"))]
     pub platform: Option<i16>, // 1 = iOS, 2 = Android, 3 = Web, 4 = Desktop
 }
 
@@ -48,15 +54,22 @@ pub struct VerifyOtpResponse {
 
 // ============ Profile Setup ============
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct SetupProfileRequest {
+    #[validate(length(min = 2, max = 100, message = "Display name must be between 2-100 characters"))]
     pub display_name: String,
     #[serde(default)]
+    #[validate(length(max = 50, message = "Username must be at most 50 characters"))]
     pub username: Option<String>,
     #[serde(default)]
+    #[validate(length(max = 500, message = "Bio must be at most 500 characters"))]
     pub bio: Option<String>,
     #[serde(default)]
+    #[validate(url(message = "Profile picture URL must be a valid URL"))]
     pub profile_picture_url: Option<String>,
+    #[serde(default)]
+    #[validate(url(message = "Background image URL must be a valid URL"))]
+    pub background_image_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -66,6 +79,7 @@ pub struct SetupProfileResponse {
     pub username: Option<String>,
     pub bio: Option<String>,
     pub profile_picture_url: Option<String>,
+    pub background_image_url: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -77,15 +91,18 @@ pub struct GetProfileResponse {
     pub username: Option<String>,
     pub bio: Option<String>,
     pub profile_picture_url: Option<String>,
+    pub background_image_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 // ============ PIN / 2FA ============
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct SetupPinRequest {
+    #[validate(length(min = 4, max = 32, message = "PIN must be between 4-32 characters"))]
     pub pin: String, // 4-6 digits or alphanumeric passphrase
+    #[validate(must_match(other = "pin", message = "PINs do not match"))]
     pub confirm_pin: String,
     #[serde(default)]
     pub enable_registration_lock: bool, // Auto-enable 2FA
@@ -97,8 +114,9 @@ pub struct SetupPinResponse {
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct VerifyPinRequest {
+    #[validate(length(min = 4, max = 32, message = "PIN must be between 4-32 characters"))]
     pub pin: String,
 }
 

@@ -47,10 +47,62 @@ vyry-api/
 
 ## Setup
 
-### 1. เริ่มต้น Database
+### Option 1: Docker/Podman (แนะนำสำหรับ Production)
+
+#### 1. สร้าง .env file
 
 ```bash
-docker-compose up -d
+cp .env.example .env
+# แก้ไข JWT_SECRET ให้เป็นค่าที่ปลอดภัย (อย่างน้อย 32 ตัวอักษร)
+```
+
+#### 2. Build และ Run ทั้งหมด (PostgreSQL + Redis + API)
+
+**Production Build (ใช้เวลานาน แต่ optimized):**
+```bash
+podman compose up -d --build
+# หรือ
+docker compose up -d --build
+```
+
+**Fast Build (สำหรับเครื่อง RAM น้อย หรือ development):**
+```bash
+DOCKERFILE=Dockerfile.fast podman compose -f docker-compose.yml -f docker-compose.fast.yml up --build
+```
+
+API จะรันที่ `http://localhost:8000`
+
+#### 3. Run Migrations
+
+```bash
+podman compose exec api sea-orm-cli migrate up
+```
+
+#### 4. ดู Logs
+
+```bash
+podman compose logs -f api
+```
+
+#### 5. Development Mode (Hot Reload)
+
+```bash
+podman compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+#### ⚠️ Tips สำหรับ Build ที่ช้า:
+
+- **ใช้ Fast Build**: `Dockerfile.fast` ใช้ debug build และ single job (ใช้ RAM น้อยกว่า)
+- **เพิ่ม RAM**: Rust release build ต้องการ RAM อย่างน้อย 4GB
+- **ใช้ BuildKit cache**: `BUILDKIT_INLINE_CACHE=1` ช่วย cache dependencies
+- **Build แยก**: Build dependencies ก่อน แล้วค่อย build application
+
+### Option 2: Local Development
+
+#### 1. เริ่มต้น Database
+
+```bash
+docker-compose up -d postgres redis adminer
 ```
 
 ### 2. สร้าง .env

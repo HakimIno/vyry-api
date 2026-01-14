@@ -1,6 +1,7 @@
 use actix_cors::Cors;
-use actix_web::{middleware::Logger, web, App, HttpServer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use actix_web::{web, App, HttpServer};
+use tracing_actix_web::TracingLogger;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub mod config;
 pub mod handlers;
@@ -10,17 +11,41 @@ mod websocket;
 use config::Config;
 use handlers::{auth, health, keys};
 use middleware::auth::AuthMiddleware;
+use middleware::rate_limit::PerIpRateLimitMiddleware;
 use websocket::{connection::ConnectionManager, handler::websocket_handler};
 
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,api=debug,actix_web=info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Initialize structured logging with JSON support
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info,api=debug,actix_web=info".into());
+    
+    // Use compact format for better readability
+    let is_json = std::env::var("LOG_FORMAT").unwrap_or_default() == "json";
+    
+    if is_json {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_file(true)
+                    .with_line_number(true)
+            )
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(false) // Hide target for cleaner output
+                    .with_file(false) // Hide file path for cleaner output
+                    .with_line_number(false) // Hide line number for cleaner output
+                    .compact()
+            )
+            .init();
+    }
 
     let config = Config::from_env()?;
     let config_data = web::Data::new(config.clone());
@@ -48,33 +73,44 @@ async fn main() -> anyhow::Result<()> {
             .allow_any_header()
             .max_age(3600);
 
+        // Global rate limiter: 100 requests per minute per IP
+        let per_ip_rate_limit = PerIpRateLimitMiddleware::new(100);
+        
+        // Stricter rate limit for auth endpoints: 10 requests per minute per IP
+        let auth_rate_limit = PerIpRateLimitMiddleware::new(10);
+
         App::new()
             .wrap(cors)
-            .wrap(Logger::default())
+            .wrap(TracingLogger::default())
+            .wrap(per_ip_rate_limit) // Global rate limiting
             .wrap(AuthMiddleware)
             .app_data(web::Data::new(db.clone()))
             .app_data(web::Data::new(redis_conn.clone()))
             .app_data(config_data.clone())
             .app_data(connection_manager.clone())
-            // Health
+            // Health (no rate limit)
             .service(health::health_check)
-            // Auth - OTP
-            .service(auth::request_otp)
-            .service(auth::verify_otp)
-            // Auth - Profile & PIN
-            .service(auth::get_profile)
-            .service(auth::setup_profile)
-            .service(auth::setup_pin)
-            .service(auth::verify_pin)
-            // Auth - Token
-            .service(auth::refresh_token)
-            // Device Linking
-            .service(auth::create_linking_session)
-            .service(auth::complete_linking)
-            .service(auth::approve_linking)
-            // Device Management
-            .service(auth::list_devices)
-            .service(auth::unlink_device)
+            // Auth endpoints with stricter rate limiting
+            .service(
+                web::scope("/api/v1/auth")
+                    .wrap(auth_rate_limit)
+                    .service(auth::request_otp)
+                    .service(auth::verify_otp)
+                    .service(auth::get_profile)
+                    .service(auth::setup_profile)
+                    .service(auth::setup_pin)
+                    .service(auth::verify_pin)
+                    .service(auth::refresh_token)
+            )
+            // Device endpoints
+            .service(
+                web::scope("/api/v1/devices")
+                    .service(auth::create_linking_session)
+                    .service(auth::complete_linking)
+                    .service(auth::approve_linking)
+                    .service(auth::list_devices)
+                    .service(auth::unlink_device)
+            )
             // Keys
             .service(keys::get_prekey_bundle)
             // WebSocket

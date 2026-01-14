@@ -1,0 +1,18 @@
+# Development docker-compose with hot reload
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/app
+      - api_target:/app/target
+    environment:
+      RUST_LOG: debug,api=trace
+      RUST_BACKTRACE: 1
+    command: cargo watch -x "run --package api"
+
+volumes:
+  api_target:

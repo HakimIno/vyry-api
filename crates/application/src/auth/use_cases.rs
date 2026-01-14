@@ -1,5 +1,11 @@
 use crate::auth::dtos::*;
-use anyhow::{anyhow, Result};
+use crate::{AppError, AppResult};
+use tracing::{info, instrument, warn};
+use validator::Validate;
+
+#[cfg(test)]
+#[path = "use_cases_test.rs"]
+mod tests;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -43,16 +49,27 @@ const DEVICE_TYPE_LINKED: i16 = 2;
 pub struct RequestOtpUseCase;
 
 impl RequestOtpUseCase {
+    #[instrument(skip(redis_conn), fields(phone_number = %req.phone_number))]
     pub async fn execute(
         redis_conn: &mut MultiplexedConnection,
         req: RequestOtpRequest,
-    ) -> Result<String> {
+    ) -> AppResult<String> {
+        // Validate input
+        req.validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
         // Check rate limit
         let attempts_key = format!("otp_attempts:{}", req.phone_number);
-        let attempts: Option<u32> = redis_conn.get(&attempts_key).await?;
+        let attempts: Option<u32> = redis_conn
+            .get(&attempts_key)
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
 
         if attempts.unwrap_or(0) >= OTP_MAX_ATTEMPTS {
-            return Err(anyhow!("Too many OTP requests. Please try again later."));
+            warn!("Rate limit exceeded for phone number: {}", req.phone_number);
+            return Err(AppError::RateLimitExceeded(
+                "Too many OTP requests. Please try again later.".to_string(),
+            ));
         }
 
         // Generate 6-digit OTP
@@ -64,16 +81,20 @@ impl RequestOtpUseCase {
         // Store in Redis with expiration
         redis_conn
             .set_ex::<_, _, ()>(&key, &otp, OTP_EXPIRY_SECONDS)
-            .await?;
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
 
         // Increment attempts counter
         redis_conn
             .incr::<_, _, ()>(&attempts_key, 1)
-            .await?;
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
         redis_conn
             .expire::<_, ()>(&attempts_key, 600) // 10 minutes window
-            .await?;
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
 
+        info!("OTP generated for phone number: {}", req.phone_number);
         // TODO: In production, send OTP via SMS provider
         // For now, return it for testing
         Ok(otp)
@@ -85,35 +106,49 @@ impl RequestOtpUseCase {
 pub struct VerifyOtpUseCase;
 
 impl VerifyOtpUseCase {
+    #[instrument(skip(db, redis_conn, config), fields(phone_number = %req.phone_number))]
     pub async fn execute(
         db: &DatabaseConnection,
         redis_conn: &mut MultiplexedConnection,
         config: &AuthConfig,
         req: VerifyOtpRequest,
-    ) -> Result<VerifyOtpResponse> {
+    ) -> AppResult<VerifyOtpResponse> {
+        // Validate input
+        req.validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
         let key = format!("otp:{}", req.phone_number);
-        let stored_otp: Option<String> = redis_conn.get(&key).await?;
+        let stored_otp: Option<String> = redis_conn
+            .get(&key)
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
 
         if stored_otp.is_none() || stored_otp.unwrap() != req.otp {
-            return Err(anyhow!("Invalid or expired OTP"));
+            warn!("Invalid OTP attempt for phone number: {}", req.phone_number);
+            return Err(AppError::Authentication("Invalid or expired OTP".to_string()));
         }
 
         // Delete OTP after successful verification
-        redis_conn.del::<_, ()>(&key).await?;
+        redis_conn
+            .del::<_, ()>(&key)
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
 
         // Start transaction
-        let txn = db.begin().await?;
+        let txn = db.begin().await.map_err(|e| AppError::Database(e.to_string()))?;
 
         // Check if user exists
         let existing_user = users::Entity::find()
             .filter(users::Column::PhoneNumber.eq(&req.phone_number))
             .one(&txn)
-            .await?;
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         let (user, is_new_user) = match existing_user {
             Some(u) => {
                 // Existing user - kick old primary device if this is a new primary login
-                Self::kick_old_primary_device(&txn, u.user_id).await?;
+                Self::kick_old_primary_device(&txn, u.user_id).await
+                    .map_err(|e| AppError::Database(e.to_string()))?;
                 (u, false)
             }
             None => {
@@ -129,6 +164,7 @@ impl VerifyOtpUseCase {
                     display_name: Set(None),
                     bio: Set(None),
                     profile_picture: Set(None),
+                    background_image: Set(None),
                     last_seen_at: Set(None),
                     is_online: Set(false),
                     is_deleted: Set(false),
@@ -140,7 +176,7 @@ impl VerifyOtpUseCase {
                     registration_lock_expires_at: Set(None),
                     pin_set_at: Set(None),
                 };
-                (new_user.insert(&txn).await?, true)
+                (new_user.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?, true)
             }
         };
 
@@ -149,28 +185,34 @@ impl VerifyOtpUseCase {
         let requires_pin = user.registration_lock && user.pin_hash.is_some();
 
         // Generate Signal Keys
-        let (identity_key_pair, _) = generate_identity_keypair()?;
+        let (identity_key_pair, _) = generate_identity_keypair()
+            .map_err(|e| AppError::Cryptographic(e.to_string()))?;
         let registration_id = generate_registration_id();
-        let signed_prekey = generate_signed_prekey(&identity_key_pair, 1)?;
-        let one_time_prekeys_list = generate_prekeys(1, 100)?;
+        let signed_prekey = generate_signed_prekey(&identity_key_pair, 1)
+            .map_err(|e| AppError::Cryptographic(e.to_string()))?;
+        let one_time_prekeys_list = generate_prekeys(1, 100)
+            .map_err(|e| AppError::Cryptographic(e.to_string()))?;
 
         // Check if device_uuid already exists (could be from previous failed registration)
         // If it exists, delete the old device and its prekeys to allow re-registration
         if let Some(existing_device) = devices::Entity::find()
             .filter(devices::Column::DeviceUuid.eq(req.device_uuid))
             .one(&txn)
-            .await?
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
         {
             // Delete one-time prekeys first (due to foreign key constraint)
             one_time_prekeys::Entity::delete_many()
                 .filter(one_time_prekeys::Column::DeviceId.eq(existing_device.device_id))
                 .exec(&txn)
-                .await?;
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
             
             // Delete the old device
             devices::Entity::delete_by_id(existing_device.device_id)
                 .exec(&txn)
-                .await?;
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
         // Create Device (Primary for OTP login)
@@ -193,7 +235,7 @@ impl VerifyOtpUseCase {
             ..Default::default()
         };
 
-        let device = device.insert(&txn).await?;
+        let device = device.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?;
 
         // Insert One Time Prekeys
         for prekey in one_time_prekeys_list {
@@ -202,10 +244,10 @@ impl VerifyOtpUseCase {
                 prekey_id: Set(prekey.id as i32),
                 public_key: Set(prekey.public_key),
             };
-            otpk.insert(&txn).await?;
+            otpk.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?;
         }
 
-        txn.commit().await?;
+        txn.commit().await.map_err(|e| AppError::Database(e.to_string()))?;
 
         // Generate JWT tokens
         let (access_token, refresh_token) =
@@ -225,19 +267,23 @@ impl VerifyOtpUseCase {
     async fn kick_old_primary_device(
         txn: &sea_orm::DatabaseTransaction,
         user_id: Uuid,
-    ) -> Result<()> {
+    ) -> AppResult<()> {
         // Deactivate all existing primary devices for this user
         let old_devices = devices::Entity::find()
             .filter(devices::Column::UserId.eq(user_id))
             .filter(devices::Column::DeviceType.eq(DEVICE_TYPE_PRIMARY))
             .filter(devices::Column::IsActive.eq(true))
             .all(txn)
-            .await?;
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         for old_device in old_devices {
             let mut active_device: devices::ActiveModel = old_device.into();
             active_device.is_active = Set(false);
-            active_device.update(txn).await?;
+            active_device
+                .update(txn)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
         Ok(())
@@ -247,7 +293,7 @@ impl VerifyOtpUseCase {
         config: &AuthConfig,
         user_id: Uuid,
         device_id: i64,
-    ) -> Result<(String, String)> {
+    ) -> AppResult<(String, String)> {
         let now = Utc::now();
 
         let access_claims = Claims {
@@ -267,8 +313,10 @@ impl VerifyOtpUseCase {
         };
 
         let encoding_key = EncodingKey::from_secret(config.jwt_secret.as_bytes());
-        let access_token = encode(&Header::default(), &access_claims, &encoding_key)?;
-        let refresh_token = encode(&Header::default(), &refresh_claims, &encoding_key)?;
+        let access_token = encode(&Header::default(), &access_claims, &encoding_key)
+            .map_err(|e| AppError::Authentication(format!("JWT encoding error: {}", e)))?;
+        let refresh_token = encode(&Header::default(), &refresh_claims, &encoding_key)
+            .map_err(|e| AppError::Authentication(format!("JWT encoding error: {}", e)))?;
 
         Ok((access_token, refresh_token))
     }
@@ -279,23 +327,28 @@ impl VerifyOtpUseCase {
 pub struct SetupProfileUseCase;
 
 impl SetupProfileUseCase {
+    #[instrument(skip(db), fields(user_id = %user_id))]
     pub async fn execute(
         db: &DatabaseConnection,
         user_id: Uuid,
         req: SetupProfileRequest,
-    ) -> Result<SetupProfileResponse> {
+    ) -> AppResult<SetupProfileResponse> {
+        // Validate input first
+        req.validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
         // Validate display name
         let display_name = req.display_name.trim();
         if display_name.is_empty() {
-            return Err(anyhow!("Display name cannot be empty"));
+            return Err(AppError::Validation("Display name cannot be empty".to_string()));
         }
 
         if display_name.len() < 2 {
-            return Err(anyhow!("Display name must be at least 2 characters"));
+            return Err(AppError::Validation("Display name must be at least 2 characters".to_string()));
         }
 
         if display_name.len() > 100 {
-            return Err(anyhow!("Display name too long (max 100 characters)"));
+            return Err(AppError::Validation("Display name too long (max 100 characters)".to_string()));
         }
 
         // Validate username if provided
@@ -304,15 +357,16 @@ impl SetupProfileUseCase {
             if !username.is_empty() {
                 // Username validation: alphanumeric, underscore, hyphen, 3-30 chars
                 if username.len() < 3 {
-                    return Err(anyhow!("Username must be at least 3 characters"));
+                    return Err(AppError::Validation("Username must be at least 3 characters".to_string()));
                 }
 
                 if username.len() > 30 {
-                    return Err(anyhow!("Username too long (max 30 characters)"));
+                    return Err(AppError::Validation("Username too long (max 30 characters)".to_string()));
                 }
 
-                if !username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
-                    return Err(anyhow!("Username can only contain letters, numbers, underscores, and hyphens"));
+                // Use regex validation
+                if !crate::auth::USERNAME_REGEX.is_match(username) {
+                    return Err(AppError::Validation("Username can only contain letters, numbers, underscores, and hyphens (3-50 characters)".to_string()));
                 }
 
                 // Check if username is already taken
@@ -323,7 +377,7 @@ impl SetupProfileUseCase {
                     .await?;
 
                 if existing_user.is_some() {
-                    return Err(anyhow!("Username is already taken"));
+                    return Err(AppError::Validation("Username is already taken".to_string()));
                 }
             }
         }
@@ -332,7 +386,7 @@ impl SetupProfileUseCase {
         if let Some(ref bio) = req.bio {
             let bio = bio.trim();
             if !bio.is_empty() && bio.len() > 500 {
-                return Err(anyhow!("Bio too long (max 500 characters)"));
+                return Err(AppError::Validation("Bio too long (max 500 characters)".to_string()));
             }
         }
 
@@ -342,25 +396,25 @@ impl SetupProfileUseCase {
             if !url.is_empty() {
                 // Basic URL validation
                 if !url.starts_with("http://") && !url.starts_with("https://") {
-                    return Err(anyhow!("Profile picture URL must be a valid HTTP/HTTPS URL"));
+                    return Err(AppError::Validation("Profile picture URL must be a valid HTTP/HTTPS URL".to_string()));
                 }
 
                 if url.len() > 2048 {
-                    return Err(anyhow!("Profile picture URL too long (max 2048 characters)"));
+                    return Err(AppError::Validation("Profile picture URL too long (max 2048 characters)".to_string()));
                 }
 
                 // Additional URL format validation - check for valid URL structure
                 if url.len() < 10 || !url.contains("://") {
-                    return Err(anyhow!("Invalid profile picture URL format"));
+                    return Err(AppError::Validation("Invalid profile picture URL format".to_string()));
                 }
 
                 // Check for valid domain structure (at least one dot after protocol)
                 if let Some(domain_part) = url.split("://").nth(1) {
                     if domain_part.is_empty() || !domain_part.contains('.') {
-                        return Err(anyhow!("Invalid profile picture URL format"));
+                        return Err(AppError::Validation("Invalid profile picture URL format".to_string()));
                     }
                 } else {
-                    return Err(anyhow!("Invalid profile picture URL format"));
+                    return Err(AppError::Validation("Invalid profile picture URL format".to_string()));
                 }
             }
         }
@@ -369,7 +423,7 @@ impl SetupProfileUseCase {
         let user = users::Entity::find_by_id(user_id)
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("User not found"))?;
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
 
         let now = Utc::now();
         let mut active_user: users::ActiveModel = user.into();
@@ -395,6 +449,13 @@ impl SetupProfileUseCase {
             active_user.profile_picture = Set(if url.is_empty() { None } else { Some(url.to_string()) });
         }
         // If profile picture not provided in request, keep existing value (for profile updates)
+        
+        // Update background image (set to None if empty string or not provided)
+        if let Some(ref url) = req.background_image_url {
+            let url = url.trim();
+            active_user.background_image = Set(if url.is_empty() { None } else { Some(url.to_string()) });
+        }
+        // If background image not provided in request, keep existing value (for profile updates)
 
         active_user.updated_at = Set(now.into());
 
@@ -406,6 +467,7 @@ impl SetupProfileUseCase {
             username: updated_user.username,
             bio: updated_user.bio,
             profile_picture_url: updated_user.profile_picture,
+            background_image_url: updated_user.background_image,
             updated_at: now,
         })
     }
@@ -416,11 +478,12 @@ impl SetupProfileUseCase {
 pub struct GetProfileUseCase;
 
 impl GetProfileUseCase {
-    pub async fn execute(db: &DatabaseConnection, user_id: Uuid) -> Result<GetProfileResponse> {
+    #[instrument(skip(db), fields(user_id = %user_id))]
+    pub async fn execute(db: &DatabaseConnection, user_id: Uuid) -> AppResult<GetProfileResponse> {
         let user = users::Entity::find_by_id(user_id)
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("User not found"))?;
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
 
         // Mask phone number (show only last 4 digits)
         let phone = &user.phone_number;
@@ -437,6 +500,7 @@ impl GetProfileUseCase {
             username: user.username,
             bio: user.bio,
             profile_picture_url: user.profile_picture,
+            background_image_url: user.background_image,
             created_at: user.created_at.into(),
             updated_at: user.updated_at.into(),
         })
@@ -452,18 +516,22 @@ impl SetupPinUseCase {
         db: &DatabaseConnection,
         user_id: Uuid,
         req: SetupPinRequest,
-    ) -> Result<SetupPinResponse> {
+    ) -> AppResult<SetupPinResponse> {
+        // Validate input first
+        req.validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
         // Validate PIN
         if req.pin.len() < PIN_MIN_LENGTH || req.pin.len() > PIN_MAX_LENGTH {
-            return Err(anyhow!(
+            return Err(AppError::Validation(format!(
                 "PIN must be between {} and {} characters",
                 PIN_MIN_LENGTH,
                 PIN_MAX_LENGTH
-            ));
+            )));
         }
 
         if req.pin != req.confirm_pin {
-            return Err(anyhow!("PIN confirmation does not match"));
+            return Err(AppError::Validation("PIN confirmation does not match".to_string()));
         }
 
         // Hash PIN with Argon2
@@ -471,14 +539,14 @@ impl SetupPinUseCase {
         let argon2 = Argon2::default();
         let pin_hash = argon2
             .hash_password(req.pin.as_bytes(), &salt)
-            .map_err(|e| anyhow!("Failed to hash PIN: {}", e))?
+            .map_err(|e| AppError::Cryptographic(format!("Failed to hash PIN: {}", e)))?
             .to_string();
 
         // Update user
         let user = users::Entity::find_by_id(user_id)
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("User not found"))?;
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
 
         let now = Utc::now();
         let mut active_user: users::ActiveModel = user.into();
@@ -515,7 +583,7 @@ impl VerifyPinUseCase {
         redis_conn: &mut MultiplexedConnection,
         user_id: Uuid,
         req: VerifyPinRequest,
-    ) -> Result<VerifyPinResponse> {
+    ) -> AppResult<VerifyPinResponse> {
         // Check rate limit for PIN attempts
         let attempts_key = format!("pin_attempts:{}", user_id);
         let attempts: Option<u32> = redis_conn.get(&attempts_key).await?;
@@ -531,13 +599,13 @@ impl VerifyPinUseCase {
         let user = users::Entity::find_by_id(user_id)
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("User not found"))?;
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
 
-        let pin_hash = user.pin_hash.ok_or_else(|| anyhow!("No PIN set"))?;
+        let pin_hash = user.pin_hash.ok_or_else(|| AppError::Validation("No PIN set".to_string()))?;
 
         // Verify PIN
         let parsed_hash = PasswordHash::new(&pin_hash)
-            .map_err(|e| anyhow!("Invalid PIN hash: {}", e))?;
+            .map_err(|e| AppError::Cryptographic(format!("Invalid PIN hash: {}", e)))?;
         let verified = Argon2::default()
             .verify_password(req.pin.as_bytes(), &parsed_hash)
             .is_ok();
@@ -573,28 +641,28 @@ impl RefreshTokenUseCase {
         db: &DatabaseConnection,
         config: &AuthConfig,
         req: RefreshTokenRequest,
-    ) -> Result<RefreshTokenResponse> {
+    ) -> AppResult<RefreshTokenResponse> {
         // Decode and validate refresh token
         let decoding_key = DecodingKey::from_secret(config.jwt_secret.as_bytes());
         let validation = Validation::default();
 
         let token_data = decode::<Claims>(&req.refresh_token, &decoding_key, &validation)
-            .map_err(|_| anyhow!("Invalid or expired refresh token"))?;
+            .map_err(|_| AppError::Authentication("Invalid or expired refresh token".to_string()))?;
 
         let claims = token_data.claims;
 
         if claims.token_type != "refresh" {
-            return Err(anyhow!("Invalid token type"));
+            return Err(AppError::Authentication("Invalid token type".to_string()));
         }
 
         // Verify device is still active
         let device = devices::Entity::find_by_id(claims.device_id)
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("Device not found"))?;
+            .ok_or_else(|| AppError::NotFound("Device not found".to_string()))?;
 
         if !device.is_active {
-            return Err(anyhow!("Device is no longer active"));
+            return Err(AppError::Authorization("Device is no longer active".to_string()));
         }
 
         let user_id: Uuid = claims.sub.parse()?;
@@ -618,19 +686,19 @@ impl CreateLinkingSessionUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         device_id: i64,
-    ) -> Result<CreateLinkingSessionResponse> {
+    ) -> AppResult<CreateLinkingSessionResponse> {
         // Verify device exists and is primary
         let device = devices::Entity::find_by_id(device_id)
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("Device not found"))?;
+            .ok_or_else(|| AppError::NotFound("Device not found".to_string()))?;
 
         if device.device_type != DEVICE_TYPE_PRIMARY {
-            return Err(anyhow!("Only primary devices can create linking sessions"));
+            return Err(AppError::Authorization("Only primary devices can create linking sessions".to_string()));
         }
 
         if !device.is_active {
-            return Err(anyhow!("Device is not active"));
+            return Err(AppError::Authorization("Device is not active".to_string()));
         }
 
         // Generate unique QR token
@@ -686,17 +754,17 @@ impl CompleteLinkingUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         req: CompleteLinkingRequest,
-    ) -> Result<CompleteLinkingResponse> {
+    ) -> AppResult<CompleteLinkingResponse> {
         // Find session by token
         let session = device_linking_sessions::Entity::find()
             .filter(device_linking_sessions::Column::QrCodeToken.eq(&req.qr_code_token))
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("Invalid linking session"))?;
+            .ok_or_else(|| AppError::NotFound("Invalid linking session".to_string()))?;
 
         // Check if session is still valid
         if !session.is_pending() {
-            return Err(anyhow!("Linking session has expired or is no longer valid"));
+            return Err(AppError::Validation("Linking session has expired or is no longer valid".to_string()));
         }
 
         // Update session with new device info
@@ -722,28 +790,28 @@ impl ApproveLinkingUseCase {
         db: &DatabaseConnection,
         primary_device_id: i64,
         req: ApproveLinkingRequest,
-    ) -> Result<ApproveLinkingResponse> {
+    ) -> AppResult<ApproveLinkingResponse> {
         let txn = db.begin().await?;
 
         // Find session
         let session = device_linking_sessions::Entity::find_by_id(req.session_id)
             .one(&txn)
             .await?
-            .ok_or_else(|| anyhow!("Session not found"))?;
+            .ok_or_else(|| AppError::NotFound("Session not found".to_string()))?;
 
         // Verify ownership
         if session.primary_device_id != primary_device_id {
-            return Err(anyhow!("Unauthorized"));
+            return Err(AppError::Authorization("Unauthorized".to_string()));
         }
 
         // Check if session is still pending
         if !session.is_pending() {
-            return Err(anyhow!("Session has expired or is no longer valid"));
+            return Err(AppError::Validation("Session has expired or is no longer valid".to_string()));
         }
 
         let new_device_uuid = session
             .new_device_uuid
-            .ok_or_else(|| anyhow!("No device waiting for approval"))?;
+            .ok_or_else(|| AppError::NotFound("No device waiting for approval".to_string()))?;
 
         let mut active_session: device_linking_sessions::ActiveModel = session.clone().into();
 
@@ -752,13 +820,16 @@ impl ApproveLinkingUseCase {
             let primary_device = devices::Entity::find_by_id(primary_device_id)
                 .one(&txn)
                 .await?
-                .ok_or_else(|| anyhow!("Primary device not found"))?;
+                .ok_or_else(|| AppError::NotFound("Primary device not found".to_string()))?;
 
             // Generate Signal Keys for new device
-            let (identity_key_pair, _) = generate_identity_keypair()?;
+            let (identity_key_pair, _) = generate_identity_keypair()
+                .map_err(|e| AppError::Cryptographic(e.to_string()))?;
             let registration_id = generate_registration_id();
-            let signed_prekey = generate_signed_prekey(&identity_key_pair, 1)?;
-            let one_time_prekeys_list = generate_prekeys(1, 100)?;
+            let signed_prekey = generate_signed_prekey(&identity_key_pair, 1)
+                .map_err(|e| AppError::Cryptographic(e.to_string()))?;
+            let one_time_prekeys_list = generate_prekeys(1, 100)
+                .map_err(|e| AppError::Cryptographic(e.to_string()))?;
 
             // Create linked device
             let new_device = devices::ActiveModel {
@@ -824,7 +895,8 @@ impl ApproveLinkingUseCase {
 pub struct ListDevicesUseCase;
 
 impl ListDevicesUseCase {
-    pub async fn execute(db: &DatabaseConnection, user_id: Uuid) -> Result<ListDevicesResponse> {
+    #[instrument(skip(db), fields(user_id = %user_id))]
+    pub async fn execute(db: &DatabaseConnection, user_id: Uuid) -> AppResult<ListDevicesResponse> {
         let devices_list = devices::Entity::find()
             .filter(devices::Column::UserId.eq(user_id))
             .filter(devices::Column::IsActive.eq(true))
@@ -867,21 +939,21 @@ impl UnlinkDeviceUseCase {
         user_id: Uuid,
         current_device_id: i64,
         target_device_id: i64,
-    ) -> Result<UnlinkDeviceResponse> {
+    ) -> AppResult<UnlinkDeviceResponse> {
         // Find target device
         let device = devices::Entity::find_by_id(target_device_id)
             .one(db)
             .await?
-            .ok_or_else(|| anyhow!("Device not found"))?;
+            .ok_or_else(|| AppError::NotFound("Device not found".to_string()))?;
 
         // Verify ownership
         if device.user_id != user_id {
-            return Err(anyhow!("Unauthorized"));
+            return Err(AppError::Authorization("Unauthorized".to_string()));
         }
 
         // Cannot unlink current device
         if device.device_id == current_device_id {
-            return Err(anyhow!("Cannot unlink current device"));
+            return Err(AppError::Validation("Cannot unlink current device".to_string()));
         }
 
         // Deactivate device

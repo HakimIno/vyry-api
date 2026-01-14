@@ -39,6 +39,37 @@ services:
     depends_on:
       - postgres
 
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: ${DOCKERFILE:-Dockerfile}
+  #     args:
+  #       BUILDKIT_INLINE_CACHE: 1
+  #   container_name: vyry-api
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     POSTGRES_URL: postgresql://vyryuser:vyrypass@postgres:5432/vyrydb
+  #     REDIS_URL: redis://redis:6379
+  #     JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production-min-32-chars}
+  #     JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
+  #     REFRESH_TOKEN_EXPIRATION: ${REFRESH_TOKEN_EXPIRATION:-604800}
+  #     SERVER_HOST: 0.0.0.0
+  #     SERVER_PORT: 8000
+  #     RUST_LOG: ${RUST_LOG:-info,api=debug}
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 40s
+
 volumes:
   postgres_data:
   redis_data:

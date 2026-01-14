@@ -16,6 +16,7 @@ mod m20251205_add_client_message_id_to_messages;
 mod m20251207000001_add_pin_to_users;
 mod m20251207000002_add_device_type_to_devices;
 mod m20251207000003_create_device_linking_sessions;
+mod m20251207000004_add_background_image_to_users;
 
 pub struct Migrator;
 
@@ -39,6 +40,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20251207000001_add_pin_to_users::Migration),
             Box::new(m20251207000002_add_device_type_to_devices::Migration),
             Box::new(m20251207000003_create_device_linking_sessions::Migration),
+            Box::new(m20251207000004_add_background_image_to_users::Migration),
         ]
     }
 }

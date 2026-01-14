@@ -26,6 +26,9 @@ argon2.workspace = true
 jsonwebtoken.workspace = true
 futures = "0.3"
 bytes = "1.8"
+governor.workspace = true
+nonzero_ext.workspace = true
+tracing-actix-web.workspace = true
 
 core = { path = "../../crates/core" }
 domain = { path = "../../crates/domain" }
