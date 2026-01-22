@@ -118,12 +118,47 @@ impl VerifyOtpUseCase {
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
         let key = format!("otp:{}", req.phone_number);
+        
+        // First check if key exists
+        let exists: bool = redis_conn
+            .exists(&key)
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
+        
+        if !exists {
+            warn!("OTP not found for phone number: {}", req.phone_number);
+            return Err(AppError::Authentication("Invalid or expired OTP".to_string()));
+        }
+        
+        // Check TTL to verify it hasn't expired
+        let ttl: i64 = redis_conn
+            .ttl(&key)
+            .await
+            .map_err(|e| AppError::Redis(e.to_string()))?;
+        
+        // TTL returns -2 if key doesn't exist (shouldn't happen after EXISTS check)
+        // -1 if key exists but has no expiration (shouldn't happen for OTP)
+        // > 0 if key exists and hasn't expired
+        // 0 if key exists but has just expired
+        if ttl <= 0 {
+            warn!("OTP expired for phone number: {} (TTL: {})", req.phone_number, ttl);
+            return Err(AppError::Authentication("Invalid or expired OTP".to_string()));
+        }
+        
+        // Get the stored OTP value
         let stored_otp: Option<String> = redis_conn
             .get(&key)
             .await
             .map_err(|e| AppError::Redis(e.to_string()))?;
 
-        if stored_otp.is_none() || stored_otp.unwrap() != req.otp {
+        // Double-check: if key was deleted between EXISTS and GET (race condition)
+        if stored_otp.is_none() {
+            warn!("OTP key was deleted between checks for phone number: {}", req.phone_number);
+            return Err(AppError::Authentication("Invalid or expired OTP".to_string()));
+        }
+
+        // Verify OTP value matches
+        if stored_otp.unwrap() != req.otp {
             warn!("Invalid OTP attempt for phone number: {}", req.phone_number);
             return Err(AppError::Authentication("Invalid or expired OTP".to_string()));
         }
