@@ -624,9 +624,18 @@ impl VerifyPinUseCase {
         let attempts: Option<u32> = redis_conn.get(&attempts_key).await?;
 
         if attempts.unwrap_or(0) >= 5 {
+            // Get TTL to show remaining lockout time
+            let ttl: i64 = redis_conn.ttl(&attempts_key).await?;
+            let lockout_remaining_seconds = if ttl > 0 {
+                Some(ttl as u64)
+            } else {
+                None
+            };
+
             return Ok(VerifyPinResponse {
                 verified: false,
                 attempts_remaining: Some(0),
+                lockout_remaining_seconds,
             });
         }
 
@@ -663,6 +672,7 @@ impl VerifyPinUseCase {
         Ok(VerifyPinResponse {
             verified,
             attempts_remaining: Some(5 - current_attempts),
+            lockout_remaining_seconds: None, // Only set when locked out
         })
     }
 }

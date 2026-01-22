@@ -124,6 +124,8 @@ pub struct VerifyPinRequest {
 pub struct VerifyPinResponse {
     pub verified: bool,
     pub attempts_remaining: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lockout_remaining_seconds: Option<u64>, // Time remaining until lockout expires (in seconds)
 }
 
 #[derive(Debug, Serialize, Deserialize)]

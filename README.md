@@ -115,7 +115,7 @@ cp .env.example .env
 
 ```bash
 cargo install sea-orm-cli
-sea-orm-cli migrate up
+argo run -p migration -- up --offline 2>&1 || cargo run -p migration -- up
 ```
 
 ### 4. Build & Run
