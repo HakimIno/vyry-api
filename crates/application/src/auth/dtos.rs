@@ -123,9 +123,20 @@ pub struct VerifyPinRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VerifyPinResponse {
     pub verified: bool,
+    pub has_pin: bool, // Whether the user has a PIN set
     pub attempts_remaining: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lockout_remaining_seconds: Option<u64>, // Time remaining until lockout expires (in seconds)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PinStatusResponse {
+    pub has_pin: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkipPinSetupResponse {
+    pub message: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

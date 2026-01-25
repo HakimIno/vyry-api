@@ -178,6 +178,68 @@ pub async fn verify_pin(
 
     match VerifyPinUseCase::execute(db.get_ref(), &mut conn, user_id, req.into_inner()).await {
         Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => {
+            // If user doesn't have a PIN, return special error code
+            if e.to_string().contains("No PIN set") {
+                return HttpResponse::BadRequest().json(AuthErrorResponse {
+                    error: e.to_string(),
+                    error_code: "NO_PIN_SET".to_string(),
+                    retry_after_seconds: None,
+                });
+            }
+            HttpResponse::BadRequest().json(AuthErrorResponse {
+                error: e.to_string(),
+                error_code: "INVALID_REQUEST".to_string(),
+                retry_after_seconds: None,
+            })
+        },
+    }
+}
+
+#[get("/pin-status")]
+pub async fn pin_status(
+    http_req: HttpRequest,
+    db: web::Data<DatabaseConnection>,
+) -> impl Responder {
+    let (user_id, _) = match extract_auth_claims(&http_req) {
+        Some(claims) => claims,
+        None => {
+            return HttpResponse::Unauthorized().json(AuthErrorResponse {
+                error: "Unauthorized".to_string(),
+                error_code: "UNAUTHORIZED".to_string(),
+                retry_after_seconds: None,
+            })
+        }
+    };
+
+    match CheckPinStatusUseCase::execute(db.get_ref(), user_id).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => HttpResponse::InternalServerError().json(AuthErrorResponse {
+            error: e.to_string(),
+            error_code: "INTERNAL_ERROR".to_string(),
+            retry_after_seconds: None,
+        }),
+    }
+}
+
+#[post("/skip-pin-setup")]
+pub async fn skip_pin_setup(
+    http_req: HttpRequest,
+    db: web::Data<DatabaseConnection>,
+) -> impl Responder {
+    let (user_id, _) = match extract_auth_claims(&http_req) {
+        Some(claims) => claims,
+        None => {
+            return HttpResponse::Unauthorized().json(AuthErrorResponse {
+                error: "Unauthorized".to_string(),
+                error_code: "UNAUTHORIZED".to_string(),
+                retry_after_seconds: None,
+            })
+        }
+    };
+
+    match SkipPinSetupUseCase::execute(db.get_ref(), user_id).await {
+        Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => HttpResponse::BadRequest().json(AuthErrorResponse {
             error: e.to_string(),
             error_code: "INVALID_REQUEST".to_string(),

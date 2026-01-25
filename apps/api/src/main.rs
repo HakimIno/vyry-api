@@ -100,6 +100,8 @@ async fn main() -> anyhow::Result<()> {
                     .service(auth::setup_profile)
                     .service(auth::setup_pin)
                     .service(auth::verify_pin)
+                    .service(auth::pin_status)
+                    .service(auth::skip_pin_setup)
                     .service(auth::refresh_token)
             )
             // Device endpoints

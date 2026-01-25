@@ -634,6 +634,7 @@ impl VerifyPinUseCase {
 
             return Ok(VerifyPinResponse {
                 verified: false,
+                has_pin: true, // User has PIN but is locked out
                 attempts_remaining: Some(0),
                 lockout_remaining_seconds,
             });
@@ -645,7 +646,18 @@ impl VerifyPinUseCase {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
 
-        let pin_hash = user.pin_hash.ok_or_else(|| AppError::Validation("No PIN set".to_string()))?;
+        // Check if user has a PIN
+        let pin_hash = match user.pin_hash {
+            Some(hash) => hash,
+            None => {
+                return Ok(VerifyPinResponse {
+                    verified: false,
+                    has_pin: false,
+                    attempts_remaining: None,
+                    lockout_remaining_seconds: None,
+                });
+            }
+        };
 
         // Verify PIN
         let parsed_hash = PasswordHash::new(&pin_hash)
@@ -671,6 +683,7 @@ impl VerifyPinUseCase {
 
         Ok(VerifyPinResponse {
             verified,
+            has_pin: true, // We know the user has a PIN if we reached this point
             attempts_remaining: Some(5 - current_attempts),
             lockout_remaining_seconds: None, // Only set when locked out
         })
@@ -1009,6 +1022,58 @@ impl UnlinkDeviceUseCase {
         Ok(UnlinkDeviceResponse {
             unlinked: true,
             message: "Device unlinked successfully".to_string(),
+        })
+    }
+}
+
+// ============ Check PIN Status Use Case ============
+
+pub struct CheckPinStatusUseCase;
+
+impl CheckPinStatusUseCase {
+    pub async fn execute(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+    ) -> AppResult<PinStatusResponse> {
+        // Get user
+        let user = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
+
+        Ok(PinStatusResponse {
+            has_pin: user.pin_hash.is_some(),
+        })
+    }
+}
+
+// ============ Skip PIN Setup Use Case ============
+
+pub struct SkipPinSetupUseCase;
+
+impl SkipPinSetupUseCase {
+    pub async fn execute(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+    ) -> AppResult<SkipPinSetupResponse> {
+        // Get user
+        let user = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
+
+        // Update user to explicitly mark that PIN setup was skipped
+        // We can use pin_set_at field with a special value to indicate skipped
+        let mut active_user: users::ActiveModel = user.into();
+        active_user.pin_hash = Set(None); // Explicitly no PIN
+        active_user.registration_lock = Set(false); // Disable registration lock
+        active_user.pin_set_at = Set(Some(Utc::now().into())); // Mark as "processed"
+        active_user.updated_at = Set(Utc::now().into());
+
+        active_user.update(db).await?;
+
+        Ok(SkipPinSetupResponse {
+            message: "PIN setup skipped successfully".to_string(),
         })
     }
 }
