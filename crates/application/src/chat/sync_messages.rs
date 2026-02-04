@@ -44,6 +44,11 @@ impl SyncMessagesUseCase {
                         sender_id: msg.sender_user_id,
                         sender_device_id: msg.sender_device_id,
                         content,
+                        iv: msg.iv,
+                        message_type: msg.message_type,
+                        attachment_url: msg.attachment_url,
+                        thumbnail_url: msg.thumbnail_url,
+                        reply_to_message_id: msg.reply_to_message_id,
                         sent_at: msg.sent_at.timestamp(),
                     });
                 }

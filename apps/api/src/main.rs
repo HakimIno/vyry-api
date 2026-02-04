@@ -5,6 +5,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 pub mod config;
 pub mod handlers;
+pub mod extractors;
 mod middleware;
 mod websocket;
  
@@ -112,6 +113,14 @@ async fn main() -> anyhow::Result<()> {
                     .service(auth::approve_linking)
                     .service(auth::list_devices)
                     .service(auth::unlink_device)
+            )
+            // Friend Management
+            .service(
+                web::scope("/api/v1")
+                    .service(handlers::friends::send_friend_request)
+                    .service(handlers::friends::accept_friend_request)
+                    .service(handlers::friends::list_friends)
+                    .service(handlers::friends::search_users)
             )
             // Keys
             .service(keys::get_prekey_bundle)

@@ -30,9 +30,12 @@ impl SendMessageUseCase {
                 client_message_id: Set(Some(req.client_message_id)),
                 sender_user_id: Set(req.sender_id),
                 sender_device_id: Set(req.sender_device_id),
-                message_type: Set(1), // Signal Message
+                message_type: Set(req.message_type),
                 content: Set("".to_string()), // Placeholder for sender's copy
-                iv: Set(Vec::new()),
+                iv: Set(req.iv),
+                attachment_url: Set(req.attachment_url),
+                thumbnail_url: Set(req.thumbnail_url),
+                reply_to_message_id: Set(req.reply_to_message_id),
                 sent_at: Set(Utc::now().into()),
                 ..Default::default()
             };

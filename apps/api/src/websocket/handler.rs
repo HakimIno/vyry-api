@@ -13,7 +13,11 @@ pub struct WsQuery {
     token: String,
 }
 
-use application::chat::{dtos::SendMessageRequest, use_cases::SendMessageUseCase};
+use application::chat::{
+    dtos::{SendMessageRequest, DeliveryStatusType},
+    use_cases::SendMessageUseCase,
+    update_status::UpdateDeliveryStatusUseCase,
+};
 use sea_orm::DatabaseConnection;
 
 #[get("/ws/")]
@@ -67,7 +71,19 @@ pub async fn websocket_handler(
                     match serde_json::from_str::<super::messages::WsMessage>(&text) {
                         Ok(ws_msg) => {
                             match ws_msg {
-                                super::messages::WsMessage::SignalMessage { conversation_id, client_message_id, recipient_id, recipient_device_id, content } => {
+                                super::messages::WsMessage::SignalMessage {
+                                    conversation_id,
+                                    client_message_id,
+                                    recipient_id,
+                                    recipient_device_id,
+                                    content,
+                                    iv,
+                                    message_type,
+                                    attachment_url,
+                                    thumbnail_url,
+                                    reply_to_message_id,
+                                    ..
+                                } => {
                                     tracing::info!("Routing SignalMessage to User {} Device {}", recipient_id, recipient_device_id);
                                     
                                     // Persist message to DB (Store & Forward)
@@ -79,6 +95,11 @@ pub async fn websocket_handler(
                                         conversation_id,
                                         client_message_id,
                                         content: content.clone(),
+                                        iv: iv.clone(),
+                                        message_type,
+                                        attachment_url: attachment_url.clone(),
+                                        thumbnail_url: thumbnail_url.clone(),
+                                        reply_to_message_id,
                                     };
 
                                     if let Err(e) = SendMessageUseCase::execute(&db, req).await {
@@ -91,9 +112,16 @@ pub async fn websocket_handler(
                                         let outbound = super::messages::WsMessage::SignalMessage {
                                             conversation_id,
                                             client_message_id,
-                                            recipient_id, // In outbound, this might be sender_id? Or client knows context.
+                                            sender_id: Some(user_id),
+                                            sender_device_id: Some(device_id),
+                                            recipient_id,
                                             recipient_device_id,
                                             content,
+                                            iv,
+                                            message_type,
+                                            attachment_url,
+                                            thumbnail_url,
+                                            reply_to_message_id,
                                         };
                                         if let Ok(json) = serde_json::to_string(&outbound) {
                                             let _ = target_conn.session.text(json).await;
@@ -105,7 +133,9 @@ pub async fn websocket_handler(
                                 }
                                 super::messages::WsMessage::Ack { message_id } => {
                                     tracing::info!("Received Ack for message {}", message_id);
-                                    // TODO: Update message status in DB
+                                    if let Err(e) = UpdateDeliveryStatusUseCase::execute(&db, message_id, device_id, DeliveryStatusType::Delivered).await {
+                                        tracing::error!("Failed to update delivery status: {}", e);
+                                    }
                                 }
                                 super::messages::WsMessage::SyncRequest { last_message_id } => {
                                     tracing::info!("Received SyncRequest from User {} Device {}", user_id, device_id);

@@ -5,7 +5,7 @@ use validator::Validate;
 
 // ============ JWT Claims ============
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
     pub device_id: i64,

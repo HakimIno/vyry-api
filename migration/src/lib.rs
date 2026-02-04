@@ -1,6 +1,7 @@
 pub use sea_orm_migration::prelude::*;
 
 mod m20220101_000001_create_table;
+mod m20260201_093729_create_friends;
 mod m20251201000001_create_users;
 mod m20251201000002_create_devices;
 mod m20251201000003_create_one_time_prekeys;
@@ -41,6 +42,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20251207000002_add_device_type_to_devices::Migration),
             Box::new(m20251207000003_create_device_linking_sessions::Migration),
             Box::new(m20251207000004_add_background_image_to_users::Migration),
+            Box::new(m20260201_093729_create_friends::Migration),
         ]
     }
 }

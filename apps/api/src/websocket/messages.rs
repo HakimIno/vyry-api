@@ -9,13 +9,20 @@ pub enum WsMessage {
     SignalMessage {
         conversation_id: Uuid,
         client_message_id: Uuid,
+        sender_id: Option<Uuid>, // Optional for inbound (server sets it), Mandatory for outbound
+        sender_device_id: Option<i64>,
         recipient_id: Uuid,
         recipient_device_id: i64,
         content: Vec<u8>, // Encrypted blob
+        iv: Vec<u8>,
+        message_type: i16,
+        attachment_url: Option<String>,
+        thumbnail_url: Option<String>,
+        reply_to_message_id: Option<i64>,
     },
     /// Acknowledge receipt of a message
     Ack {
-        message_id: String,
+        message_id: i64,
     },
     /// Request to sync offline messages
     SyncRequest {

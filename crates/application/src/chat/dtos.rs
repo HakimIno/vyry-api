@@ -10,6 +10,11 @@ pub struct SendMessageRequest {
     pub conversation_id: Uuid,
     pub client_message_id: Uuid,
     pub content: Vec<u8>,
+    pub iv: Vec<u8>,
+    pub message_type: i16,
+    pub attachment_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub reply_to_message_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,6 +25,11 @@ pub struct SyncMessageDto {
     pub sender_id: Uuid,
     pub sender_device_id: i64,
     pub content: Vec<u8>,
+    pub iv: Vec<u8>,
+    pub message_type: i16,
+    pub attachment_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub reply_to_message_id: Option<i64>,
     pub sent_at: i64,
 }
 
