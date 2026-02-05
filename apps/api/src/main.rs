@@ -120,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
                     .service(handlers::friends::send_friend_request)
                     .service(handlers::friends::accept_friend_request)
                     .service(handlers::friends::list_friends)
+                    .service(handlers::friends::list_pending_requests)
                     .service(handlers::friends::search_users)
             )
             // Keys

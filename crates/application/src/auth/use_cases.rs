@@ -272,14 +272,22 @@ impl VerifyOtpUseCase {
 
         let device = device.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?;
 
-        // Insert One Time Prekeys
-        for prekey in one_time_prekeys_list {
-            let otpk = one_time_prekeys::ActiveModel {
+        // Insert One Time Prekeys - Batch Insert Optimization
+        let prekey_models: Vec<one_time_prekeys::ActiveModel> = one_time_prekeys_list
+            .into_iter()
+            .map(|prekey| one_time_prekeys::ActiveModel {
                 device_id: Set(device.device_id),
                 prekey_id: Set(prekey.id as i32),
                 public_key: Set(prekey.public_key),
-            };
-            otpk.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?;
+                ..Default::default()
+            })
+            .collect();
+
+        if !prekey_models.is_empty() {
+             one_time_prekeys::Entity::insert_many(prekey_models)
+                .exec(&txn)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
         txn.commit().await.map_err(|e| AppError::Database(e.to_string()))?;

@@ -5,6 +5,7 @@ use application::friends::{
     accept_friend::AcceptFriendUseCase,
     list_friends::ListFriendsUseCase,
     search_user::SearchUserUseCase,
+    list_pending::ListPendingRequestsUseCase,
     dtos::{AddFriendRequest, AcceptFriendRequest},
 };
 use sea_orm::DatabaseConnection;
@@ -100,3 +101,19 @@ pub async fn search_users( // Auth required
         Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e})),
     }
 }
+#[get("/friends/requests")]
+pub async fn list_pending_requests(
+    user: AuthUser,
+    db: web::Data<DatabaseConnection>,
+) -> impl Responder {
+    let user_id = match Uuid::parse_str(&user.sub) {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::Unauthorized().body("Invalid user ID in token"),
+    };
+
+    match ListPendingRequestsUseCase::execute(&db, user_id).await {
+        Ok(requests) => HttpResponse::Ok().json(requests),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e})),
+    }
+}
+
