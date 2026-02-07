@@ -1,9 +1,10 @@
 use super::dtos::AddFriendRequest;
-use core::entities::friends;
+use vyry_core::entities::friends;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
 };
 use chrono::Utc;
+use crate::AppError;
 
 pub struct AddFriendUseCase;
 
@@ -11,9 +12,9 @@ impl AddFriendUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         req: AddFriendRequest,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         if req.user_id == req.friend_id {
-            return Err("Cannot add yourself as friend".to_string());
+            return Err(AppError::Validation("Cannot add yourself as friend".to_string()));
         }
 
         // Check if relationship already exists
@@ -24,10 +25,10 @@ impl AddFriendUseCase {
             )
             .one(db)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
         if exists.is_some() {
-            return Err("Friend request already sent or users are already friends".to_string());
+            return Err(AppError::Conflict("Friend request already sent or users are already friends".to_string()));
         }
 
         // Create forward relationship (Requester -> Target)
@@ -47,7 +48,7 @@ impl AddFriendUseCase {
         // - Record A->B (Status: Pending) means A asked B.
         // - When B accepts, we update A->B to Accepted AND create B->A as Accepted.
         
-        friend_req.insert(db).await.map_err(|e| e.to_string())?;
+        friend_req.insert(db).await.map_err(AppError::from)?;
 
         Ok(())
     }

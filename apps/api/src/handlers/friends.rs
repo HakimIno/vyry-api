@@ -11,6 +11,8 @@ use application::friends::{
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 use serde::Deserialize;
+use crate::handlers::error_handler::HttpAppError;
+use application::AppError;
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -33,21 +35,16 @@ pub async fn send_friend_request(
     user: AuthUser,
     db: web::Data<DatabaseConnection>,
     body: web::Json<FriendRequestInput>,
-) -> impl Responder {
-    let user_id = match Uuid::parse_str(&user.sub) {
-        Ok(id) => id,
-        Err(_) => return HttpResponse::Unauthorized().body("Invalid user ID in token"),
-    };
+) -> Result<impl Responder, HttpAppError> {
+    let user_id = Uuid::parse_str(&user.sub).map_err(|_| AppError::Authentication("Invalid user ID".to_string()))?;
 
     let req = AddFriendRequest {
         user_id, // requester
         friend_id: body.friend_id,
     };
 
-    match AddFriendUseCase::execute(&db, req).await {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({"message": "Friend request sent"})),
-        Err(e) => HttpResponse::BadRequest().json(serde_json::json!({"error": e})),
-    }
+    AddFriendUseCase::execute(&db, req).await?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({"message": "Friend request sent"})))
 }
 
 #[post("/friends/accept")]
@@ -55,11 +52,8 @@ pub async fn accept_friend_request(
     user: AuthUser,
     db: web::Data<DatabaseConnection>,
     body: web::Json<AcceptRequestInput>,
-) -> impl Responder {
-    let user_id = match Uuid::parse_str(&user.sub) {
-        Ok(id) => id,
-        Err(_) => return HttpResponse::Unauthorized().body("Invalid user ID in token"),
-    };
+) -> Result<impl Responder, HttpAppError> {
+    let user_id = Uuid::parse_str(&user.sub).map_err(|_| AppError::Authentication("Invalid user ID".to_string()))?;
 
     let req = AcceptFriendRequest {
         user_id, // acceptor
@@ -67,26 +61,19 @@ pub async fn accept_friend_request(
         accept: body.accept,
     };
 
-    match AcceptFriendUseCase::execute(&db, req).await {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({"message": "Friend request processed"})),
-        Err(e) => HttpResponse::BadRequest().json(serde_json::json!({"error": e})),
-    }
+    AcceptFriendUseCase::execute(&db, req).await?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({"message": "Friend request processed"})))
 }
 
 #[get("/friends")]
 pub async fn list_friends(
     user: AuthUser,
     db: web::Data<DatabaseConnection>,
-) -> impl Responder {
-    let user_id = match Uuid::parse_str(&user.sub) {
-        Ok(id) => id,
-        Err(_) => return HttpResponse::Unauthorized().body("Invalid user ID in token"),
-    };
+) -> Result<impl Responder, HttpAppError> {
+    let user_id = Uuid::parse_str(&user.sub).map_err(|_| AppError::Authentication("Invalid user ID".to_string()))?;
 
-    match ListFriendsUseCase::execute(&db, user_id).await {
-        Ok(friends) => HttpResponse::Ok().json(friends),
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e})),
-    }
+    let friends = ListFriendsUseCase::execute(&db, user_id).await?;
+    Ok(HttpResponse::Ok().json(friends))
 }
 
 #[get("/users/search")]
@@ -94,26 +81,20 @@ pub async fn search_users( // Auth required
     _user: AuthUser, 
     db: web::Data<DatabaseConnection>,
     query: web::Query<SearchQuery>,
-) -> impl Responder {
-    match SearchUserUseCase::execute(&db, query.q.clone()).await {
-        Ok(Some(user)) => HttpResponse::Ok().json(user),
-        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({"error": "User not found"})),
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e})),
+) -> Result<impl Responder, HttpAppError> {
+    match SearchUserUseCase::execute(&db, query.q.clone()).await? {
+        Some(user) => Ok(HttpResponse::Ok().json(user)),
+        None => Err(AppError::NotFound("User not found".to_string()).into()),
     }
 }
 #[get("/friends/requests")]
 pub async fn list_pending_requests(
     user: AuthUser,
     db: web::Data<DatabaseConnection>,
-) -> impl Responder {
-    let user_id = match Uuid::parse_str(&user.sub) {
-        Ok(id) => id,
-        Err(_) => return HttpResponse::Unauthorized().body("Invalid user ID in token"),
-    };
+) -> Result<impl Responder, HttpAppError> {
+    let user_id = Uuid::parse_str(&user.sub).map_err(|_| AppError::Authentication("Invalid user ID".to_string()))?;
 
-    match ListPendingRequestsUseCase::execute(&db, user_id).await {
-        Ok(requests) => HttpResponse::Ok().json(requests),
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e})),
-    }
+    let requests = ListPendingRequestsUseCase::execute(&db, user_id).await?;
+    Ok(HttpResponse::Ok().json(requests))
 }
 

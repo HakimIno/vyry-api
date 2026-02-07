@@ -3,20 +3,22 @@ use ed25519_dalek::{Signature, Signer, SigningKey};
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-#[derive(Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IdentityKeyPair {
     pub public_key: Vec<u8>,
     pub private_key: Vec<u8>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PreKey {
     pub id: u32,
     pub public_key: Vec<u8>,
     pub private_key: Vec<u8>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SignedPreKey {
     pub id: u32,
     pub public_key: Vec<u8>,
@@ -25,6 +27,7 @@ pub struct SignedPreKey {
     pub timestamp: u64,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SignalKeys {
     pub identity_key_pair: IdentityKeyPair,
     pub registration_id: u32,
@@ -82,6 +85,29 @@ pub fn generate_prekeys(start_id: u32, count: u32) -> Result<Vec<PreKey>> {
         });
     }
     Ok(prekeys)
+}
+
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PreKeyBundle {
+    pub device_id: u32,
+    pub registration_id: u32,
+    pub identity_key: Vec<u8>, // Public key
+    pub signed_prekey: PublicSignedPreKey,
+    pub one_time_prekey: Option<PublicPreKey>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PublicPreKey {
+    pub id: u32,
+    pub key: Vec<u8>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PublicSignedPreKey {
+    pub id: u32,
+    pub key: Vec<u8>,
+    pub signature: Vec<u8>,
 }
 
 pub fn create_signal_keys() -> Result<SignalKeys> {

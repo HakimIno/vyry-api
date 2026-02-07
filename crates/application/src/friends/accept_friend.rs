@@ -1,9 +1,10 @@
 use super::dtos::AcceptFriendRequest;
-use core::entities::friends;
+use vyry_core::entities::friends;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, TransactionTrait, ModelTrait,
 };
 use chrono::Utc;
+use crate::AppError;
 
 pub struct AcceptFriendUseCase;
 
@@ -11,7 +12,7 @@ impl AcceptFriendUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         req: AcceptFriendRequest,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         // Find the pending request (Requester -> User)
         // Here, req.user_id is the acceptor (B), req.requester_id is A
         // We look for A -> B with status Pending
@@ -24,23 +25,23 @@ impl AcceptFriendUseCase {
             )
             .one(db)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
-        let friend_record = friend_model.ok_or("Friend request not found".to_string())?;
+        let friend_record = friend_model.ok_or_else(|| AppError::NotFound("Friend request not found".to_string()))?;
 
         if !req.accept {
             // Reject: Delete the request
-            friend_record.delete(db).await.map_err(|e| e.to_string())?;
+            friend_record.delete(db).await.map_err(AppError::from)?;
             return Ok(());
         }
 
-        let txn = db.begin().await.map_err(|e| e.to_string())?;
+        let txn = db.begin().await.map_err(AppError::from)?;
 
         // 1. Update A->B to Accepted
         let mut active_model: friends::ActiveModel = friend_record.into();
         active_model.status = Set(1); // Accepted
         active_model.updated_at = Set(Utc::now().into());
-        active_model.update(&txn).await.map_err(|e| e.to_string())?;
+        active_model.update(&txn).await.map_err(AppError::from)?;
 
         // 2. Create B->A as Accepted (Bidirectional)
         let reverse_friend = friends::ActiveModel {
@@ -63,18 +64,18 @@ impl AcceptFriendUseCase {
             )
             .one(&txn)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
         if let Some(existing) = reverse_exists {
             let mut rev_active: friends::ActiveModel = existing.into();
             rev_active.status = Set(1);
             rev_active.updated_at = Set(Utc::now().into());
-            rev_active.update(&txn).await.map_err(|e| e.to_string())?;
+            rev_active.update(&txn).await.map_err(AppError::from)?;
         } else {
-            reverse_friend.insert(&txn).await.map_err(|e| e.to_string())?;
+            reverse_friend.insert(&txn).await.map_err(AppError::from)?;
         }
 
-        txn.commit().await.map_err(|e| e.to_string())?;
+        txn.commit().await.map_err(AppError::from)?;
 
         Ok(())
     }

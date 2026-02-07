@@ -11,7 +11,7 @@ use argon2::{
     Argon2,
 };
 use chrono::{Duration, Utc};
-use core::entities::{device_linking_sessions, devices, one_time_prekeys, users};
+use vyry_core::entities::{device_linking_sessions, devices, one_time_prekeys, users};
 use infrastructure::crypto::signal::{
     generate_identity_keypair, generate_prekeys, generate_registration_id, generate_signed_prekey,
 };
@@ -63,7 +63,7 @@ impl RequestOtpUseCase {
         let attempts: Option<u32> = redis_conn
             .get(&attempts_key)
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
 
         if attempts.unwrap_or(0) >= OTP_MAX_ATTEMPTS {
             warn!("Rate limit exceeded for phone number: {}", req.phone_number);
@@ -82,17 +82,17 @@ impl RequestOtpUseCase {
         redis_conn
             .set_ex::<_, _, ()>(&key, &otp, OTP_EXPIRY_SECONDS)
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
 
         // Increment attempts counter
         redis_conn
             .incr::<_, _, ()>(&attempts_key, 1)
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
         redis_conn
             .expire::<_, ()>(&attempts_key, 600) // 10 minutes window
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
 
         info!("OTP generated for phone number: {}", req.phone_number);
         // TODO: In production, send OTP via SMS provider
@@ -123,7 +123,7 @@ impl VerifyOtpUseCase {
         let exists: bool = redis_conn
             .exists(&key)
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
         
         if !exists {
             warn!("OTP not found for phone number: {}", req.phone_number);
@@ -134,7 +134,7 @@ impl VerifyOtpUseCase {
         let ttl: i64 = redis_conn
             .ttl(&key)
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
         
         // TTL returns -2 if key doesn't exist (shouldn't happen after EXISTS check)
         // -1 if key exists but has no expiration (shouldn't happen for OTP)
@@ -149,7 +149,7 @@ impl VerifyOtpUseCase {
         let stored_otp: Option<String> = redis_conn
             .get(&key)
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
 
         // Double-check: if key was deleted between EXISTS and GET (race condition)
         if stored_otp.is_none() {
@@ -167,23 +167,23 @@ impl VerifyOtpUseCase {
         redis_conn
             .del::<_, ()>(&key)
             .await
-            .map_err(|e| AppError::Redis(e.to_string()))?;
+            ?;
 
         // Start transaction
-        let txn = db.begin().await.map_err(|e| AppError::Database(e.to_string()))?;
+        let txn = db.begin().await.map_err(AppError::from)?;
 
         // Check if user exists
         let existing_user = users::Entity::find()
             .filter(users::Column::PhoneNumber.eq(&req.phone_number))
             .one(&txn)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(AppError::from)?;
 
         let (user, is_new_user) = match existing_user {
             Some(u) => {
                 // Existing user - kick old primary device if this is a new primary login
                 Self::kick_old_primary_device(&txn, u.user_id).await
-                    .map_err(|e| AppError::Database(e.to_string()))?;
+                    .map_err(AppError::from)?;
                 (u, false)
             }
             None => {
@@ -211,7 +211,7 @@ impl VerifyOtpUseCase {
                     registration_lock_expires_at: Set(None),
                     pin_set_at: Set(None),
                 };
-                (new_user.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?, true)
+                (new_user.insert(&txn).await.map_err(AppError::from)?, true)
             }
         };
 
@@ -234,20 +234,20 @@ impl VerifyOtpUseCase {
             .filter(devices::Column::DeviceUuid.eq(req.device_uuid))
             .one(&txn)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .map_err(AppError::from)?
         {
             // Delete one-time prekeys first (due to foreign key constraint)
             one_time_prekeys::Entity::delete_many()
                 .filter(one_time_prekeys::Column::DeviceId.eq(existing_device.device_id))
                 .exec(&txn)
                 .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .map_err(AppError::from)?;
             
             // Delete the old device
             devices::Entity::delete_by_id(existing_device.device_id)
                 .exec(&txn)
                 .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .map_err(AppError::from)?;
         }
 
         // Create Device (Primary for OTP login)
@@ -270,7 +270,7 @@ impl VerifyOtpUseCase {
             ..Default::default()
         };
 
-        let device = device.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?;
+        let device = device.insert(&txn).await.map_err(AppError::from)?;
 
         // Insert One Time Prekeys - Batch Insert Optimization
         let prekey_models: Vec<one_time_prekeys::ActiveModel> = one_time_prekeys_list
@@ -287,10 +287,10 @@ impl VerifyOtpUseCase {
              one_time_prekeys::Entity::insert_many(prekey_models)
                 .exec(&txn)
                 .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .map_err(AppError::from)?;
         }
 
-        txn.commit().await.map_err(|e| AppError::Database(e.to_string()))?;
+        txn.commit().await.map_err(AppError::from)?;
 
         // Generate JWT tokens
         let (access_token, refresh_token) =
@@ -318,7 +318,7 @@ impl VerifyOtpUseCase {
             .filter(devices::Column::IsActive.eq(true))
             .all(txn)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(AppError::from)?;
 
         for old_device in old_devices {
             let mut active_device: devices::ActiveModel = old_device.into();
@@ -326,7 +326,7 @@ impl VerifyOtpUseCase {
             active_device
                 .update(txn)
                 .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .map_err(AppError::from)?;
         }
 
         Ok(())

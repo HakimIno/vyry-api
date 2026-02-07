@@ -26,3 +26,15 @@ pub trait MessageRepository: Send + Sync {
 pub trait ConversationRepository: Send + Sync {
     // Conversation operations would go here
 }
+
+#[::async_trait::async_trait]
+pub trait SignalRepository: Send + Sync {
+    // Fetch a prekey bundle for a specific device
+    async fn get_prekey_bundle(&self, device_id: i64) -> anyhow::Result<Option<core::signal::wrapper::PreKeyBundle>>;
+    
+    // Store one-time prekeys for a device
+    async fn store_one_time_prekeys(&self, device_id: i64, keys: Vec<core::signal::wrapper::PublicPreKey>) -> anyhow::Result<()>;
+    
+    // Count remaining prekeys for a device
+    async fn count_one_time_prekeys(&self, device_id: i64) -> anyhow::Result<u64>;
+}

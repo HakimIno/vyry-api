@@ -38,3 +38,17 @@ pub enum DeliveryStatusType {
     Delivered,
     Read,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateDirectConversationRequest {
+    pub friend_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConversationResponse {
+    pub id: Uuid,
+    pub friend_id: Uuid,
+    // Using String for ISO dates to match TS interface
+    pub created_at: String,
+    pub updated_at: String,
+}

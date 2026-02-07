@@ -1,9 +1,10 @@
 use super::dtos::SearchUserResponse;
-use core::entities::users;
+use vyry_core::entities::users;
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
 };
 use uuid::Uuid;
+use crate::AppError;
 
 pub struct SearchUserUseCase;
 
@@ -11,7 +12,7 @@ impl SearchUserUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         query: String, 
-    ) -> Result<Option<SearchUserResponse>, String> {
+    ) -> Result<Option<SearchUserResponse>, AppError> {
         let mut condition = Condition::any()
             .add(users::Column::Username.contains(query.clone()))
             .add(users::Column::PhoneNumber.contains(query.clone()));
@@ -24,7 +25,7 @@ impl SearchUserUseCase {
             .filter(condition)
             .one(db)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
         if user.is_none() {
              return Ok(None);

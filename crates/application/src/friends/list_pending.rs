@@ -1,9 +1,10 @@
 use super::dtos::FriendDto;
-use core::entities::{friends, users};
+use vyry_core::entities::{friends, users};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, RelationTrait, JoinType, FromQueryResult, prelude::DateTimeWithTimeZone
 };
 use uuid::Uuid;
+use crate::AppError;
 
 pub struct ListPendingRequestsUseCase;
 
@@ -21,7 +22,7 @@ impl ListPendingRequestsUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         user_id: Uuid,
-    ) -> Result<Vec<FriendDto>, String> {
+    ) -> Result<Vec<FriendDto>, AppError> {
         // Query friends where friend_id = user_id (Me) AND status = 0 (Pending)
         // Join with User via Users1 (friends.user_id -> users.user_id) to get Requester
         
@@ -41,7 +42,7 @@ impl ListPendingRequestsUseCase {
             .into_model::<RequestData>()
             .all(db)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
         let requests_list = requests.into_iter().map(|r| FriendDto {
             user_id: r.user_id,

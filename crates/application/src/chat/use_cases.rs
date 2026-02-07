@@ -1,9 +1,10 @@
 use super::dtos::SendMessageRequest;
-use core::entities::{message_deliveries, messages};
+use vyry_core::entities::{message_deliveries, messages};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, TransactionTrait,
 };
 use chrono::Utc;
+use crate::AppError;
 
 pub struct SendMessageUseCase;
 
@@ -11,15 +12,15 @@ impl SendMessageUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         req: SendMessageRequest,
-    ) -> Result<(), String> {
-        let txn = db.begin().await.map_err(|e| e.to_string())?;
+    ) -> Result<(), AppError> {
+        let txn = db.begin().await.map_err(AppError::from)?;
 
         // 1. Check if message exists (deduplication)
         let message = messages::Entity::find()
             .filter(messages::Column::ClientMessageId.eq(req.client_message_id))
             .one(&txn)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
         let message_id = if let Some(msg) = message {
             msg.message_id
@@ -39,7 +40,7 @@ impl SendMessageUseCase {
                 sent_at: Set(Utc::now().into()),
                 ..Default::default()
             };
-            let inserted_msg = new_msg.insert(&txn).await.map_err(|e| e.to_string())?;
+            let inserted_msg = new_msg.insert(&txn).await.map_err(AppError::from)?;
             inserted_msg.message_id
         };
 
@@ -50,7 +51,7 @@ impl SendMessageUseCase {
             .filter(message_deliveries::Column::DeviceId.eq(req.recipient_device_id))
             .one(&txn)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(AppError::from)?
             .is_some();
 
         if !delivery_exists {
@@ -60,10 +61,10 @@ impl SendMessageUseCase {
                 content: Set(Some(req.content)),
                 ..Default::default()
             };
-            delivery.insert(&txn).await.map_err(|e| e.to_string())?;
+            delivery.insert(&txn).await.map_err(AppError::from)?;
         }
 
-        txn.commit().await.map_err(|e| e.to_string())?;
+        txn.commit().await.map_err(AppError::from)?;
 
         Ok(())
     }

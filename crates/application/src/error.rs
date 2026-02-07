@@ -1,88 +1,52 @@
-use std::error::Error;
-use std::fmt;
+use thiserror::Error;
 
 /// Application-level errors
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AppError {
-    /// Authentication errors
+    /// Authentication errors (401)
+    #[error("Authentication failed: {0}")]
     Authentication(String),
 
-    /// Authorization errors
+    /// Authorization errors (403)
+    #[error("Authorization failed: {0}")]
     Authorization(String),
 
-    /// Validation errors
+    /// Validation errors (400)
+    #[error("Validation failed: {0}")]
     Validation(String),
 
-    /// Not found errors
+    /// Not found errors (404)
+    #[error("Resource not found: {0}")]
     NotFound(String),
 
-    /// Rate limiting errors
+    /// Rate limiting errors (429)
+    #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
 
-    /// Database errors
-    Database(String),
+    /// Conflict errors (409) - e.g. duplicate unique key
+    #[error("Conflict: {0}")]
+    Conflict(String),
 
-    /// Redis errors
-    Redis(String),
+    /// Database errors (500 or mapped)
+    #[error("Database error: {0}")]
+    Database(#[from] sea_orm::DbErr),
 
-    /// Cryptographic errors
+    /// Redis errors (500)
+    #[error("Redis error: {0}")]
+    Redis(#[from] redis::RedisError),
+
+    /// Cryptographic errors (500)
+    #[error("Cryptographic error: {0}")]
     Cryptographic(String),
 
-    /// Configuration errors
+    /// Configuration errors (500)
+    #[error("Configuration error: {0}")]
     Configuration(String),
 
-    /// Internal server errors
-    Internal(String),
+    /// Internal server errors (500)
+    #[error("Internal server error: {0}")]
+    Internal(anyhow::Error),
 }
-
-impl fmt::Display for AppError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AppError::Authentication(msg) => {
-                f.write_str("Authentication failed: ")?;
-                f.write_str(msg)
-            }
-            AppError::Authorization(msg) => {
-                f.write_str("Authorization failed: ")?;
-                f.write_str(msg)
-            }
-            AppError::Validation(msg) => {
-                f.write_str("Validation failed: ")?;
-                f.write_str(msg)
-            }
-            AppError::NotFound(msg) => {
-                f.write_str("Resource not found: ")?;
-                f.write_str(msg)
-            }
-            AppError::RateLimitExceeded(msg) => {
-                f.write_str("Rate limit exceeded: ")?;
-                f.write_str(msg)
-            }
-            AppError::Database(msg) => {
-                f.write_str("Database error: ")?;
-                f.write_str(msg)
-            }
-            AppError::Redis(msg) => {
-                f.write_str("Redis error: ")?;
-                f.write_str(msg)
-            }
-            AppError::Cryptographic(msg) => {
-                f.write_str("Cryptographic error: ")?;
-                f.write_str(msg)
-            }
-            AppError::Configuration(msg) => {
-                f.write_str("Configuration error: ")?;
-                f.write_str(msg)
-            }
-            AppError::Internal(msg) => {
-                f.write_str("Internal server error: ")?;
-                f.write_str(msg)
-            }
-        }
-    }
-}
-
-impl Error for AppError {}
 
 impl AppError {
     /// Get HTTP status code for the error
@@ -92,10 +56,21 @@ impl AppError {
             AppError::Authorization(_) => 403,
             AppError::Validation(_) => 400,
             AppError::NotFound(_) => 404,
+            AppError::Conflict(_) => 409,
             AppError::RateLimitExceeded(_) => 429,
-            AppError::Database(_) | AppError::Redis(_) | AppError::Internal(_) => 500,
-            AppError::Cryptographic(_) => 500,
-            AppError::Configuration(_) => 500,
+            AppError::Database(e) => {
+                // Map specific DB errors to HTTP status codes
+                match e {
+                    sea_orm::DbErr::RecordNotFound(_) => 404,
+                    // Check for unique constraint violation in the error message or type if possible
+                    // sea_orm::DbErr::Query(RuntimeErr::SqlxError(sqlx::Error::Database(db_err))) 
+                    // if db_err.code().as_deref() == Some("23505") => 409, // 23505 is PostgreSQL unique_violation
+                    // For now, we can check string representation for common unique violation messages if explicit matching is hard
+                    e if e.to_string().contains("Duplicate entry") || e.to_string().contains("unique constraint") => 409,
+                    _ => 500,
+                }
+            },
+            AppError::Redis(_) | AppError::Internal(_) | AppError::Cryptographic(_) | AppError::Configuration(_) => 500,
         }
     }
 
@@ -105,9 +80,16 @@ impl AppError {
             AppError::Authentication(_) => "AUTHENTICATION_FAILED",
             AppError::Authorization(_) => "AUTHORIZATION_FAILED",
             AppError::Validation(_) => "VALIDATION_ERROR",
-            AppError::NotFound(_) => "NOT_FOUND",
+            AppError::NotFound(_) | AppError::Database(sea_orm::DbErr::RecordNotFound(_)) => "NOT_FOUND",
+            AppError::Conflict(_) => "CONFLICT",
             AppError::RateLimitExceeded(_) => "RATE_LIMITED",
-            AppError::Database(_) => "DATABASE_ERROR",
+            AppError::Database(e) => {
+                 if e.to_string().contains("unique constraint") {
+                     "CONFLICT"
+                 } else {
+                     "DATABASE_ERROR"
+                 }
+            },
             AppError::Redis(_) => "REDIS_ERROR",
             AppError::Cryptographic(_) => "CRYPTOGRAPHIC_ERROR",
             AppError::Configuration(_) => "CONFIGURATION_ERROR",
@@ -124,18 +106,7 @@ impl AppError {
     }
 }
 
-// Convert from common error types
-impl From<sea_orm::DbErr> for AppError {
-    fn from(err: sea_orm::DbErr) -> Self {
-        AppError::Database(err.to_string())
-    }
-}
-
-impl From<redis::RedisError> for AppError {
-    fn from(err: redis::RedisError) -> Self {
-        AppError::Redis(err.to_string())
-    }
-}
+// Additional From implementations for conversion
 
 impl From<jsonwebtoken::errors::Error> for AppError {
     fn from(err: jsonwebtoken::errors::Error) -> Self {
@@ -180,6 +151,13 @@ impl From<uuid::Error> for AppError {
 impl From<std::num::ParseIntError> for AppError {
     fn from(err: std::num::ParseIntError) -> Self {
         AppError::Validation(format!("Parse error: {}", err))
+    }
+}
+
+
+impl From<anyhow::Error> for AppError {
+    fn from(err: anyhow::Error) -> Self {
+        AppError::Internal(err)
     }
 }
 

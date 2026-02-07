@@ -1,41 +1,38 @@
 use super::dtos::SyncMessageDto;
 use vyry_core::entities::{message_deliveries, messages};
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 use uuid::Uuid;
 use crate::AppError;
 
-pub struct SyncMessagesUseCase;
+pub struct ListMessagesUseCase;
 
-impl SyncMessagesUseCase {
+impl ListMessagesUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
-        _user_id: Uuid,
+        conversation_id: Uuid,
         device_id: i64,
-        last_message_id: Option<i64>,
+        limit: u64,
+        offset: u64,
     ) -> Result<Vec<SyncMessageDto>, AppError> {
         // Query message_deliveries joined with messages
-        // Where device_id = device_id AND delivered_at IS NULL
-        // AND message_id > last_message_id (if provided)
-        
-        let mut query = message_deliveries::Entity::find()
+        // We need messages for the conversation_id and ordering by sent_at
+
+        let results = message_deliveries::Entity::find()
             .filter(message_deliveries::Column::DeviceId.eq(device_id))
-            .filter(message_deliveries::Column::DeliveredAt.is_null());
-
-        if let Some(last_id) = last_message_id {
-            query = query.filter(message_deliveries::Column::MessageId.gt(last_id));
-        }
-
-        let deliveries = query
             .find_also_related(messages::Entity)
+            .filter(messages::Column::ConvId.eq(conversation_id))
+            .order_by_desc(messages::Column::SentAt)
+            .limit(limit)
+            .offset(offset)
             .all(db)
             .await
             .map_err(AppError::from)?;
 
         let mut result = Vec::new();
 
-        for (delivery, message) in deliveries {
+        for (delivery, message) in results {
             if let Some(msg) = message {
                 if let Some(content) = delivery.content {
                     result.push(SyncMessageDto {

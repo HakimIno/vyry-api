@@ -1,9 +1,10 @@
 use super::dtos::FriendDto;
-use core::entities::{friends, users};
+use vyry_core::entities::{friends, users};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, 
 };
 use uuid::Uuid;
+use crate::AppError;
 
 pub struct ListFriendsUseCase;
 
@@ -11,7 +12,7 @@ impl ListFriendsUseCase {
     pub async fn execute(
         db: &DatabaseConnection,
         user_id: Uuid,
-    ) -> Result<Vec<FriendDto>, String> {
+    ) -> Result<Vec<FriendDto>, AppError> {
         // Query friends where user_id = user_id AND status = 1 (Accepted)
         // Join with users table to get details
         
@@ -23,7 +24,7 @@ impl ListFriendsUseCase {
             .find_also_related(users::Entity)
             .all(db)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
         let mut friends_list = Vec::new();
 

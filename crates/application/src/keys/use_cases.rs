@@ -1,7 +1,8 @@
 use super::dtos::{PreKeyBundleResponse, PreKeyDto, SignedPreKeyDto};
-use core::entities::{devices, one_time_prekeys};
+use vyry_core::entities::{devices, one_time_prekeys};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use uuid::Uuid;
+use crate::AppError;
 
 pub struct GetPreKeyBundleUseCase;
 
@@ -10,15 +11,28 @@ impl GetPreKeyBundleUseCase {
         db: &DatabaseConnection,
         user_id: Uuid,
         device_id: i64,
-    ) -> Result<PreKeyBundleResponse, String> {
-        // 1. Fetch Device
+    ) -> Result<PreKeyBundleResponse, AppError> {
+        // 1. Fetch Device - with fallback to any device if requested device_id doesn't exist
         let device = devices::Entity::find()
             .filter(devices::Column::UserId.eq(user_id))
             .filter(devices::Column::DeviceId.eq(device_id))
             .one(db)
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or("Device not found")?;
+            .map_err(AppError::from)?;
+
+        // Fallback: if requested device doesn't exist, get the first available device for this user
+        let device = match device {
+            Some(d) => d,
+            None => {
+                devices::Entity::find()
+                    .filter(devices::Column::UserId.eq(user_id))
+                    .order_by_asc(devices::Column::DeviceId)
+                    .one(db)
+                    .await
+                    .map_err(AppError::from)?
+                    .ok_or_else(|| AppError::NotFound("No devices found for user".to_string()))?
+            }
+        };
 
         // 2. Fetch One One-Time Prekey
         // We need to fetch one and delete it (or mark as used).
@@ -31,7 +45,7 @@ impl GetPreKeyBundleUseCase {
             .order_by_asc(one_time_prekeys::Column::PrekeyId) // Get oldest
             .one(db)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::from)?;
 
         // If we found a prekey, we should ideally delete it.
         if let Some(ref pk) = prekey {
@@ -42,7 +56,7 @@ impl GetPreKeyBundleUseCase {
              let _ = one_time_prekeys::Entity::delete_by_id((pk.device_id, pk.prekey_id))
                  .exec(db)
                  .await
-                 .map_err(|e| e.to_string())?;
+                 .map_err(AppError::from)?;
         }
 
         Ok(PreKeyBundleResponse {
@@ -59,5 +73,88 @@ impl GetPreKeyBundleUseCase {
                 key: pk.public_key,
             }),
         })
+    }
+}
+
+pub struct UploadKeysUseCase;
+
+impl UploadKeysUseCase {
+    pub async fn execute(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+        device_id: i64,
+        dto: super::dtos::UploadKeysDto,
+    ) -> Result<(), AppError> {
+        use sea_orm::ActiveModelTrait;
+        use sea_orm::Set;
+
+        // 1. Update Device with Identity Key and Signed PreKey
+        // We find the device first to ensure it belongs to the user
+        let device = devices::Entity::find()
+             .filter(devices::Column::UserId.eq(user_id))
+             .filter(devices::Column::DeviceId.eq(device_id))
+             .one(db)
+             .await
+             .map_err(AppError::from)?
+             .ok_or_else(|| AppError::NotFound("Device not found".to_string()))?;
+
+        let mut device_active: devices::ActiveModel = device.into();
+        
+        device_active.identity_key_public = Set(dto.identity_key);
+        device_active.registration_id = Set(dto.registration_id);
+        device_active.signed_prekey_id = Set(dto.signed_prekey.id);
+        device_active.signed_prekey_public = Set(dto.signed_prekey.key);
+        device_active.signed_prekey_signature = Set(dto.signed_prekey.signature);
+        
+        device_active.update(db).await.map_err(AppError::from)?;
+
+        // 2. Insert One-Time PreKeys
+        if !dto.one_time_prekeys.is_empty() {
+            // First, delete existing prekeys for this device to avoid duplicates
+            one_time_prekeys::Entity::delete_many()
+                .filter(one_time_prekeys::Column::DeviceId.eq(device_id))
+                .exec(db)
+                .await
+                .map_err(AppError::from)?;
+
+            let keys: Vec<one_time_prekeys::ActiveModel> = dto.one_time_prekeys.into_iter().map(|k| {
+                one_time_prekeys::ActiveModel {
+                    device_id: Set(device_id),
+                    prekey_id: Set(k.id),
+                    public_key: Set(k.key),
+                }
+            }).collect();
+
+            // Insert new prekeys
+             one_time_prekeys::Entity::insert_many(keys)
+                .exec(db)
+                .await
+                .map_err(AppError::from)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct GetUserDevicesUseCase;
+
+impl GetUserDevicesUseCase {
+    pub async fn execute(
+        db: &DatabaseConnection,
+        user_id: Uuid,
+    ) -> Result<Vec<super::dtos::DeviceDto>, AppError> {
+        let devices = devices::Entity::find()
+            .filter(devices::Column::UserId.eq(user_id))
+            .filter(devices::Column::IsActive.eq(true))
+            .order_by_asc(devices::Column::LastSeenAt)
+            .all(db)
+            .await
+            .map_err(AppError::from)?;
+
+        Ok(devices.into_iter().map(|d| super::dtos::DeviceDto {
+            device_id: d.device_id,
+            registration_id: d.registration_id,
+            last_seen_at: Some(d.last_seen_at),
+        }).collect())
     }
 }

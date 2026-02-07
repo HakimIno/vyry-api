@@ -10,7 +10,7 @@ mod middleware;
 mod websocket;
  
 use config::Config;
-use handlers::{auth, health, keys};
+use handlers::{auth, health, keys, conversations};
 use middleware::auth::AuthMiddleware;
 use middleware::rate_limit::PerIpRateLimitMiddleware;
 use websocket::{connection::ConnectionManager, handler::websocket_handler};
@@ -122,9 +122,14 @@ async fn main() -> anyhow::Result<()> {
                     .service(handlers::friends::list_friends)
                     .service(handlers::friends::list_pending_requests)
                     .service(handlers::friends::search_users)
+                    // Conversations
+                    .service(conversations::create_direct_conversation)
+                    .service(conversations::get_conversation_messages)
+                    // Keys
+                    .service(keys::get_prekey_bundle)
+                    .service(keys::upload_keys)
+                    .service(keys::get_user_devices)
             )
-            // Keys
-            .service(keys::get_prekey_bundle)
             // WebSocket
             .service(websocket_handler)
     })
