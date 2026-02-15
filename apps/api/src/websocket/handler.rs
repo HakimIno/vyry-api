@@ -253,6 +253,13 @@ pub async fn websocket_handler(
                                         }
                                     }
                                 }
+                                super::messages::WsMessage::Ping {} => {
+                                    // Respond to application-level heartbeat with Pong
+                                    let pong = super::messages::WsMessage::Pong {};
+                                    if let Ok(json) = serde_json::to_string(&pong) {
+                                        let _ = session.text(json).await;
+                                    }
+                                }
                                 _ => {}
                             }
                         }

@@ -68,6 +68,10 @@ pub enum WsMessage {
         code: String,
         message: String,
     },
+    /// Client heartbeat ping
+    Ping {},
+    /// Server heartbeat pong
+    Pong {},
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
