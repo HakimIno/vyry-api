@@ -35,3 +35,5 @@ domain = { path = "../../crates/domain" }
 application = { path = "../../crates/application" }
 infrastructure = { path = "../../crates/infrastructure" }
 interfaces = { path = "../../crates/interfaces" }
+dashmap = "6.1.0"
+rmp-serde.workspace = true

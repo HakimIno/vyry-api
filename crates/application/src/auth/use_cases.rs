@@ -12,9 +12,6 @@ use argon2::{
 };
 use chrono::{Duration, Utc};
 use vyry_core::entities::{device_linking_sessions, devices, one_time_prekeys, users};
-use infrastructure::crypto::signal::{
-    generate_identity_keypair, generate_prekeys, generate_registration_id, generate_signed_prekey,
-};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rand::Rng;
 use redis::aio::MultiplexedConnection;
@@ -219,14 +216,9 @@ impl VerifyOtpUseCase {
         let requires_profile_setup = user.display_name.is_none();
         let requires_pin = user.registration_lock && user.pin_hash.is_some();
 
-        // Generate Signal Keys
-        let (identity_key_pair, _) = generate_identity_keypair()
-            .map_err(|e| AppError::Cryptographic(e.to_string()))?;
-        let registration_id = generate_registration_id();
-        let signed_prekey = generate_signed_prekey(&identity_key_pair, 1)
-            .map_err(|e| AppError::Cryptographic(e.to_string()))?;
-        let one_time_prekeys_list = generate_prekeys(1, 100)
-            .map_err(|e| AppError::Cryptographic(e.to_string()))?;
+        // NOTE: Signal keys are NOT generated server-side.
+        // The client generates keys using libsignal and uploads them via POST /api/v1/keys.
+        // Server-side ed25519/x25519 keys are incompatible with libsignal's Curve25519 format.
 
         // Check if device_uuid already exists (could be from previous failed registration)
         // If it exists, delete the old device and its prekeys to allow re-registration
@@ -250,17 +242,17 @@ impl VerifyOtpUseCase {
                 .map_err(AppError::from)?;
         }
 
-        // Create Device (Primary for OTP login)
+        // Create Device with empty keys (client will upload via POST /api/v1/keys)
         let device = devices::ActiveModel {
             user_id: Set(user.user_id),
             device_uuid: Set(req.device_uuid),
             device_name: Set(req.device_name.clone()),
             platform: Set(req.platform.unwrap_or(1)),
-            identity_key_public: Set(identity_key_pair.public_key),
-            registration_id: Set(registration_id as i32),
-            signed_prekey_id: Set(signed_prekey.id as i32),
-            signed_prekey_public: Set(signed_prekey.public_key),
-            signed_prekey_signature: Set(signed_prekey.signature),
+            identity_key_public: Set(vec![]),
+            registration_id: Set(0),
+            signed_prekey_id: Set(0),
+            signed_prekey_public: Set(vec![]),
+            signed_prekey_signature: Set(vec![]),
             last_seen_at: Set(Utc::now().into()),
             created_at: Set(Utc::now().into()),
             device_type: Set(DEVICE_TYPE_PRIMARY),
@@ -271,24 +263,6 @@ impl VerifyOtpUseCase {
         };
 
         let device = device.insert(&txn).await.map_err(AppError::from)?;
-
-        // Insert One Time Prekeys - Batch Insert Optimization
-        let prekey_models: Vec<one_time_prekeys::ActiveModel> = one_time_prekeys_list
-            .into_iter()
-            .map(|prekey| one_time_prekeys::ActiveModel {
-                device_id: Set(device.device_id),
-                prekey_id: Set(prekey.id as i32),
-                public_key: Set(prekey.public_key),
-                ..Default::default()
-            })
-            .collect();
-
-        if !prekey_models.is_empty() {
-             one_time_prekeys::Entity::insert_many(prekey_models)
-                .exec(&txn)
-                .await
-                .map_err(AppError::from)?;
-        }
 
         txn.commit().await.map_err(AppError::from)?;
 
@@ -888,26 +862,20 @@ impl ApproveLinkingUseCase {
                 .await?
                 .ok_or_else(|| AppError::NotFound("Primary device not found".to_string()))?;
 
-            // Generate Signal Keys for new device
-            let (identity_key_pair, _) = generate_identity_keypair()
-                .map_err(|e| AppError::Cryptographic(e.to_string()))?;
-            let registration_id = generate_registration_id();
-            let signed_prekey = generate_signed_prekey(&identity_key_pair, 1)
-                .map_err(|e| AppError::Cryptographic(e.to_string()))?;
-            let one_time_prekeys_list = generate_prekeys(1, 100)
-                .map_err(|e| AppError::Cryptographic(e.to_string()))?;
+            // NOTE: Signal keys are NOT generated server-side.
+            // The linked device will upload its own keys via POST /api/v1/keys.
 
-            // Create linked device
+            // Create linked device with empty keys
             let new_device = devices::ActiveModel {
                 user_id: Set(primary_device.user_id),
                 device_uuid: Set(new_device_uuid),
                 device_name: Set(session.new_device_name.clone()),
                 platform: Set(3), // Default to Web for linked devices
-                identity_key_public: Set(identity_key_pair.public_key),
-                registration_id: Set(registration_id as i32),
-                signed_prekey_id: Set(signed_prekey.id as i32),
-                signed_prekey_public: Set(signed_prekey.public_key),
-                signed_prekey_signature: Set(signed_prekey.signature),
+                identity_key_public: Set(vec![]),
+                registration_id: Set(0),
+                signed_prekey_id: Set(0),
+                signed_prekey_public: Set(vec![]),
+                signed_prekey_signature: Set(vec![]),
                 last_seen_at: Set(Utc::now().into()),
                 created_at: Set(Utc::now().into()),
                 device_type: Set(DEVICE_TYPE_LINKED),
@@ -918,16 +886,6 @@ impl ApproveLinkingUseCase {
             };
 
             let new_device = new_device.insert(&txn).await?;
-
-            // Insert One Time Prekeys
-            for prekey in one_time_prekeys_list {
-                let otpk = one_time_prekeys::ActiveModel {
-                    device_id: Set(new_device.device_id),
-                    prekey_id: Set(prekey.id as i32),
-                    public_key: Set(prekey.public_key),
-                };
-                otpk.insert(&txn).await?;
-            }
 
             // Update session status
             active_session.status = Set(2); // Approved

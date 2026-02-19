@@ -1,12 +1,42 @@
 use super::connection::{ConnectionManager, WsConnection};
 use crate::config::Config;
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
-use actix_ws::Message;
+use actix_ws::{Message, Session};
 use application::auth::dtos::Claims;
 use futures::StreamExt;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::Deserialize;
 use uuid::Uuid;
+
+/// Serialize a WsMessage to MessagePack binary and send via WebSocket session.
+use serde::Serialize;
+use rmp_serde::Serializer;
+
+/// Serialize a WsMessage to MessagePack binary and send via WebSocket session.
+async fn send_msg(session: &mut Session, msg: &super::messages::WsMessage) {
+    let mut buf = Vec::new();
+    let mut serializer = Serializer::new(&mut buf).with_struct_map();
+
+    match msg.serialize(&mut serializer) {
+        Ok(_) => { 
+            if let Err(e) = session.binary(buf).await {
+                tracing::error!("Failed to send binary message to session: {}", e);
+            } else {
+                tracing::debug!("Successfully sent binary message");
+            }
+        }
+        Err(e) => tracing::error!("Failed to serialize outbound message: {}", e),
+    }
+}
+
+/// Parse a WsMessage from either MessagePack bytes or JSON string.
+fn parse_ws_message(data: &[u8], is_binary: bool) -> Result<super::messages::WsMessage, String> {
+    if is_binary {
+        rmp_serde::from_slice(data).map_err(|e| format!("MessagePack parse error: {}", e))
+    } else {
+        serde_json::from_slice(data).map_err(|e| format!("JSON parse error: {}", e))
+    }
+}
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -65,10 +95,14 @@ pub async fn websocket_handler(
     actix_web::rt::spawn(async move {
         while let Some(Ok(msg)) = msg_stream.next().await {
             match msg {
-                Message::Text(text) => {
-                    tracing::debug!("Received text message: {}", text);
-                    // Parse message
-                    match serde_json::from_str::<super::messages::WsMessage>(&text) {
+                msg @ (Message::Binary(_) | Message::Text(_)) => {
+                    let (data, is_binary): (&[u8], bool) = match &msg {
+                        Message::Binary(bin) => (bin.as_ref(), true),
+                        Message::Text(text) => (text.as_ref(), false),
+                        _ => unreachable!(),
+                    };
+                    tracing::debug!("Received {} message: {} bytes", if is_binary { "binary" } else { "text" }, data.len());
+                    match parse_ws_message(data, is_binary) {
                         Ok(ws_msg) => {
                             match ws_msg {
                                 super::messages::WsMessage::SignalMessage {
@@ -109,6 +143,7 @@ pub async fn websocket_handler(
 
                                     // Forward to specific device
                                     if let Some(mut target_conn) = manager.get_device_connection(&recipient_id, recipient_device_id).await {
+                                        tracing::info!("Found active connection for User {} Device {}. Forwarding message...", recipient_id, recipient_device_id);
                                         let outbound = super::messages::WsMessage::SignalMessage {
                                             conversation_id,
                                             client_message_id,
@@ -123,9 +158,8 @@ pub async fn websocket_handler(
                                             thumbnail_url,
                                             reply_to_message_id,
                                         };
-                                        if let Ok(json) = serde_json::to_string(&outbound) {
-                                            let _ = target_conn.session.text(json).await;
-                                        }
+                                        send_msg(&mut target_conn.session, &outbound).await;
+                                        tracing::info!("Message forwarded to session.");
                                     } else {
                                         tracing::warn!("Recipient {} device {} not online", recipient_id, recipient_device_id);
                                         // Message is already stored in DB, so it will be fetched on sync (Phase 4 task)
@@ -142,9 +176,7 @@ pub async fn websocket_handler(
                                     match application::chat::sync_messages::SyncMessagesUseCase::execute(&db, user_id, device_id, last_message_id).await {
                                         Ok(messages) => {
                                             let response = super::messages::WsMessage::SyncResponse { messages };
-                                            if let Ok(json) = serde_json::to_string(&response) {
-                                                let _ = session.text(json).await;
-                                            }
+                                            send_msg(&mut session, &response).await;
                                         }
                                         Err(e) => {
                                             tracing::error!("Failed to sync messages: {}", e);
@@ -159,9 +191,7 @@ pub async fn websocket_handler(
                                             recipient_device_id: device_id,
                                             sdp,
                                         };
-                                        if let Ok(json) = serde_json::to_string(&outbound) {
-                                            let _ = target_conn.session.text(json).await;
-                                        }
+                                        send_msg(&mut target_conn.session, &outbound).await;
                                     }
                                 }
                                 super::messages::WsMessage::SdpAnswer { recipient_id, recipient_device_id, sdp } => {
@@ -172,9 +202,7 @@ pub async fn websocket_handler(
                                             recipient_device_id: device_id,
                                             sdp,
                                         };
-                                        if let Ok(json) = serde_json::to_string(&outbound) {
-                                            let _ = target_conn.session.text(json).await;
-                                        }
+                                        send_msg(&mut target_conn.session, &outbound).await;
                                     }
                                 }
                                 super::messages::WsMessage::IceCandidate { recipient_id, recipient_device_id, candidate } => {
@@ -185,9 +213,7 @@ pub async fn websocket_handler(
                                             recipient_device_id: device_id,
                                             candidate,
                                         };
-                                        if let Ok(json) = serde_json::to_string(&outbound) {
-                                            let _ = target_conn.session.text(json).await;
-                                        }
+                                        send_msg(&mut target_conn.session, &outbound).await;
                                     }
                                 }
                                 super::messages::WsMessage::DeliveryStatus { message_id, conversation_id, sender_id, status } => {
@@ -211,54 +237,28 @@ pub async fn websocket_handler(
                                         let outbound = super::messages::WsMessage::DeliveryStatus {
                                             message_id,
                                             conversation_id,
-                                            sender_id, // Echo back? Or maybe recipient_id? The client needs to know WHO read it.
-                                            // Actually, the message structure might need 'recipient_id' (who read it) for the sender to know.
-                                            // But 'user_id' (from context) IS the one who read it.
-                                            // Let's assume the client uses the context of who sent this status update.
-                                            // But wait, WsMessage::DeliveryStatus definition:
-                                            // sender_id: Uuid, // The original sender who should receive this update
-                                            // We should probably include 'updated_by' or similar if it's a group, but for 1-on-1, the sender knows it's the other person.
+                                            sender_id,
                                             status,
                                         };
-                                        if let Ok(json) = serde_json::to_string(&outbound) {
-                                            let _ = conn.session.text(json).await;
-                                        }
+                                        send_msg(&mut conn.session, &outbound).await;
                                     }
                                 }
                                 super::messages::WsMessage::Typing { conversation_id, recipient_id, is_typing } => {
                                     // Forward to recipient(s)
-                                    // For 1-on-1, find recipient connections
                                     let recipient_conns = manager.get_user_connections(&recipient_id).await;
                                     for mut conn in recipient_conns {
                                         let outbound = super::messages::WsMessage::Typing {
                                             conversation_id,
-                                            recipient_id: user_id, // From the perspective of the receiver, the 'recipient' of the typing event is the one TYPING.
-                                            // Wait, the struct field is 'recipient_id'. 
-                                            // In the outbound message, we should probably put the 'typer_id'.
-                                            // Let's reuse the field but interpret it as 'who is typing' when receiving?
-                                            // Or better, change the struct to have 'user_id' or 'sender_id'.
-                                            // For now, let's assume the client handles it. 
-                                            // Let's send the typer's ID in the 'recipient_id' slot? No that's confusing.
-                                            // Let's just forward it as is, but the client needs to know WHO is typing.
-                                            // The 'recipient_id' in the struct is the TARGET.
-                                            // We should probably add 'sender_id' to the Typing struct or rely on the client knowing the peer.
-                                            // Let's modify the struct in the next step if needed, but for now let's assume 1-on-1 context.
-                                            // Actually, let's just forward it. The client might need to know who sent it.
-                                            // Let's hack it: Put the sender's ID in 'recipient_id' for the outbound message?
-                                            // No, let's just send it. The client receiving it knows it came from the peer in that conversation.
+                                            recipient_id: user_id,
                                             is_typing,
                                         };
-                                        if let Ok(json) = serde_json::to_string(&outbound) {
-                                            let _ = conn.session.text(json).await;
-                                        }
+                                        send_msg(&mut conn.session, &outbound).await;
                                     }
                                 }
                                 super::messages::WsMessage::Ping {} => {
                                     // Respond to application-level heartbeat with Pong
                                     let pong = super::messages::WsMessage::Pong {};
-                                    if let Ok(json) = serde_json::to_string(&pong) {
-                                        let _ = session.text(json).await;
-                                    }
+                                    send_msg(&mut session, &pong).await;
                                 }
                                 _ => {}
                             }
@@ -267,10 +267,6 @@ pub async fn websocket_handler(
                             tracing::error!("Failed to parse message: {}", e);
                         }
                     }
-                }
-                Message::Binary(bin) => {
-                    tracing::debug!("Received binary message: {} bytes", bin.len());
-                    // TODO: Support binary protocol (e.g. MessagePack)
                 }
                 Message::Ping(bytes) => {
                     let _ = session.pong(&bytes).await;

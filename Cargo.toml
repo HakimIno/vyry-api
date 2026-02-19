@@ -44,6 +44,7 @@ jsonwebtoken = "9.3"
 validator = { version = "0.18", features = ["derive"] }
 governor = "0.6"
 nonzero_ext = "0.3"
+rmp-serde = "1"
 
 [profile.dev]
 incremental = true

@@ -34,6 +34,11 @@ impl GetPreKeyBundleUseCase {
             }
         };
 
+        // Guard: return error if client hasn't uploaded keys yet
+        if device.identity_key_public.is_empty() {
+            return Err(AppError::NotFound("Keys not yet uploaded for this device".to_string()));
+        }
+
         // 2. Fetch One One-Time Prekey
         // We need to fetch one and delete it (or mark as used).
         // For simplicity, we just fetch one. In a real Signal implementation, 
